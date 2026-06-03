@@ -1,5 +1,9 @@
 # 项目转接文档
 
+## 0. 接手范围约束
+
+当前接手任务只包含代码、部署、联调与演示闭环维护。课程设计报告、PPT、海报、截图整理等材料撰写类任务已明确不需要继续由 AI 完成；旧版 handoff 中出现的报告类待办一律视为废弃。
+
 ## 1. 当前项目概况
 
 项目名称：Atlas Edge Cloud Agent
@@ -301,17 +305,14 @@ python3 atlas_yolo_detect_and_upload.py \
 | API 文档 | 已有 `docs/api.md` |
 | 系统设计文档 | 已有 `docs/design.md` |
 
-## 5. 仍需继续完成的工作
+## 5. 仍需继续完成的工作（仅开发范围）
 
 ### 高优先级
 
-1. **完善报告/展示材料**
-   - 生成正式课程设计报告；
-   - 放入系统架构图；
-   - 放入接口说明；
-   - 放入 Atlas YOLO 推理截图；
-   - 放入管理平台截图（含新增的任务详情弹窗和调度因子）；
-   - 放入 Demo 流程说明。
+1. **重新实机验证最新边端脚本**
+   - 将 `edge/atlas_yolo_detect_and_upload.py` 和 `edge/atlas_upload_client.py` 重新上传到 Atlas；
+   - 运行 `world_cup.jpg` 闭环，确认检测结果、标注图、调度决策、云端 Agent 分析和前端详情弹窗均正常；
+   - 运行一次 `--retry-pending`，确认离线重传命令没有语法或路径问题。
 
 2. **Docker 验证**
    - 在装有 Docker 的机器上执行：
@@ -323,13 +324,13 @@ python3 atlas_yolo_detect_and_upload.py \
 ### 中优先级
 
 1. **摄像头实时流接入**
-   - Atlas 脚本目前读取静态图片；
-   - 可接入 USB 摄像头或 RTSP 流，改 `cv2.imread` 为 `cv2.VideoCapture`；
-   - 循环采集帧 → YOLO 推理 → 按间隔上传。
+   - Atlas 脚本已经支持 `--camera` 和 `--interval-sec`；
+   - 如果后续拿到 USB 摄像头或 RTSP 流，只需在 Atlas 上实测稳定性；
+   - 当前无摄像头条件下继续使用静态图片上传即可完成边云协同闭环。
 
-2. **导出报告 HTML/PDF**
-   - 当前 `/report` 导出 Markdown，已含标注图和 trace；
-   - 可进一步生成 HTML（Jinja2 模板）或 PDF（WeasyPrint）。
+2. **调度阈值实测校准**
+   - 当前高负载阈值为 `loadavg 1m > 2.0`；
+   - Atlas 上空闲 loadavg 可能偏高，建议根据实测情况调整，避免所有任务都因负载被强制上云。
 
 ### 低优先级
 
@@ -360,7 +361,7 @@ python3 atlas_yolo_detect_and_upload.py \
 
 6. **无摄像头**
    - 当前采用静态图片作为数据采集替代方案；
-   - 报告中需要明确说明这是无摄像头条件下的合理替代。
+   - 后续演示时直接说明即可，不需要在本项目内继续撰写报告材料。
 
 7. **边端脚本需重新上传**
    - `edge/atlas_yolo_detect_and_upload.py` 和 `edge/atlas_upload_client.py` 本轮有较大改动（调度逻辑、重试队列）；
@@ -392,17 +393,17 @@ python3 atlas_yolo_detect_and_upload.py \
    python3 atlas_yolo_detect_and_upload.py --image world_cup.jpg --model yolo.om --labels coco_names.txt --server http://192.168.0.101:5000 --upload
    ```
 
-2. 打开管理平台截图保存（用于课程报告）：
+2. 打开管理平台检查：
    ```text
    http://192.168.0.101:5000
    ```
-   截图要点：设备状态卡片、边端任务列表（含调度因子）、点击任务卡片弹出的详情弹窗、导出报告内容。
+   检查要点：设备状态卡片、边端任务列表（含调度因子）、点击任务卡片弹出的详情弹窗、云端分析结果。
 
-3. 写课程设计报告和 PPT/海报。
+3. 不需要继续写课程设计报告、PPT 或海报。
 
 4. 如有 Docker 环境，验证 Docker 部署。
 
-5. 若时间允许，接入 USB 摄像头或生成 HTML 报告。
+5. 若时间允许，接入 USB 摄像头或继续优化调度阈值。
 
 ## 8. 关键文件索引
 

@@ -146,7 +146,7 @@ def edge_task_report(task_id: str):
     markdown = _build_task_report(task)
     return Response(
         markdown,
-        mimetype="text/markdown; charset=utf-8",
+        mimetype="text/markdown",
         headers={"Content-Disposition": f"attachment; filename={task_id}-report.md"},
     )
 
@@ -509,7 +509,7 @@ def edge_task_report_html(task_id: str):
         analysis_markdown=analysis.get("answer") or "尚未生成云端分析。",
         trace=trace
     )
-    return Response(rendered, mimetype="text/html; charset=utf-8")
+    return Response(rendered, mimetype="text/html")
 
 
 @edge_bp.get("/api/edge/artifacts/<path:filename>")
