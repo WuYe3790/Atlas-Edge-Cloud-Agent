@@ -1432,6 +1432,53 @@ function cleanMarkdownForPreview(text) {
     .trim();
 }
 
+function parseAgentAnalysis(answer) {
+  if (!answer) return null;
+  const sections = {
+    semantics: "",
+    risk: "",
+    riskLevel: "低风险",
+    advice: []
+  };
+
+  // Extract Semantics
+  const semMatch = answer.match(/(?:##\s*💡\s*场景语义分析[^\n]*)\n([\s\S]*?)(?=\n##|$)/);
+  if (semMatch) sections.semantics = semMatch[1].trim();
+
+  // Extract Risk
+  const riskMatch = answer.match(/(?:##\s*⚠️\s*风险等级评估[^\n]*)\n([\s\S]*?)(?=\n##|$)/);
+  if (riskMatch) {
+    const text = riskMatch[1].trim();
+    sections.risk = text;
+    if (text.includes("高风险")) sections.riskLevel = "高风险";
+    else if (text.includes("中风险")) sections.riskLevel = "中风险";
+    else sections.riskLevel = "低风险";
+  }
+
+  // Extract Advice
+  const advMatch = answer.match(/(?:##\s*🛠️\s*智能处置建议[^\n]*)\n([\s\S]*?)$/);
+  if (advMatch) {
+    const text = advMatch[1].trim();
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+    sections.advice = lines.map(line => line.replace(/^\d+[\.\s]+|^\-\s+/, "").trim());
+  }
+
+  return sections;
+}
+
+function getRelativeTimeStr(date) {
+  const diffMs = new Date() - date;
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+
+  if (diffSec < 60) return "刚刚";
+  if (diffMin < 60) return `${diffMin} 分钟前`;
+  if (diffHr < 24) return `${diffHr} 小时前`;
+  return `${diffDay} 天前`;
+}
+
 function renderEdgeTasks(tasks, container) {
   if (!container) return;
   if (!tasks || !tasks.length) {
@@ -1448,14 +1495,40 @@ function renderEdgeTasks(tasks, container) {
       : `total:${summary.total_count || 0}`;
     const perfText = inference.fps ? `${inference.fps} FPS` : (inference.latency_ms ? `${inference.latency_ms} ms` : "无性能数据");
     
-    const rawAnalysis = task.analysis?.answer || "";
-    const cleanAnalysis = cleanMarkdownForPreview(rawAnalysis);
-    const analysisText = cleanAnalysis
-      ? `<div class="edge-task-analysis">
-          <div class="analysis-preview-title">云端智能体分析决策：</div>
-          <div class="analysis-preview-body">${escapeHtml(cleanAnalysis).slice(0, 120)}${cleanAnalysis.length > 120 ? "..." : ""}</div>
-         </div>`
-      : "";
+    // Parse Agent analysis report
+    const parsed = parseAgentAnalysis(task.analysis?.answer);
+    let analysisHtml = "";
+    if (parsed) {
+      const riskClass = parsed.riskLevel === "高风险" ? "high" : (parsed.riskLevel === "中风险" ? "medium" : "low");
+      analysisHtml = `
+        <div class="agent-analysis-card-box">
+          <div class="agent-box-header">
+            <span class="agent-avatar-mini">🤖</span>
+            <strong>云端 Agent 智能研判结果</strong>
+            <span class="risk-badge-mini ${riskClass}">${escapeHtml(parsed.riskLevel)}</span>
+          </div>
+          <div class="agent-box-body">
+            <p class="analysis-semantics"><strong>💡 场景理解：</strong>${escapeHtml(parsed.semantics || "解析中...")}</p>
+            ${parsed.advice.length ? `
+              <div class="analysis-advice-list">
+                <strong>🛠️ 处置建议：</strong>
+                <ul>
+                  ${parsed.advice.slice(0, 2).map(adv => `<li>${escapeHtml(adv)}</li>`).join("")}
+                </ul>
+              </div>
+            ` : ""}
+          </div>
+        </div>
+      `;
+    } else if (event.edge_decision?.need_cloud_analysis) {
+      analysisHtml = `
+        <div class="agent-analysis-card-box" style="border-style: dashed; text-align: center; color: var(--muted);">
+          <div class="agent-box-body" style="padding: 10px 0;">
+            <p>🤖 等待云端 Agent 智能决策分析...</p>
+          </div>
+        </div>
+      `;
+    }
       
     const imageUrl = event.annotated_image_url || "";
     const decision = event.edge_decision || {};
@@ -1480,6 +1553,12 @@ function renderEdgeTasks(tasks, container) {
     const dispatchCompletedClass = "completed";
     const agentClass = task.analysis ? "completed" : (needCloud ? "pending" : "skipped");
     
+    // Created time relative and absolute
+    const createdTime = task.created_at ? new Date(task.created_at.replace("Z", "+00:00")) : null;
+    const timeDisplay = createdTime 
+      ? `<span class="edge-task-time" title="绝对时间: ${escapeHtml(task.created_at)}" style="font-size: 11px; color: var(--muted); margin-top: 4px; display: inline-block;">⏰ ${getRelativeTimeStr(createdTime)}</span>`
+      : "";
+    
     return `
       <div class="edge-task-card" data-edge-task-id="${escapeHtml(task.id || "")}">
         <div class="edge-task-image-container">
@@ -1493,6 +1572,7 @@ function renderEdgeTasks(tasks, container) {
         <div class="edge-task-main">
           <strong>${escapeHtml(task.image_id || event.image_id || "未命名图片")}</strong>
           <span>设备: ${escapeHtml(task.device_id || event.device_id || "unknown-device")}</span>
+          ${timeDisplay}
         </div>
         
         <div class="edge-task-meta">
@@ -1544,11 +1624,13 @@ function renderEdgeTasks(tasks, container) {
           </div>
         </div>
         
-        ${analysisText}
+        ${analysisHtml}
         
         <div class="edge-task-actions">
           <a class="edge-report-link" href="/api/edge/tasks/${encodeURIComponent(task.id || "")}/report" target="_blank" rel="noreferrer">导出报告</a>
-          <button type="button" class="edge-analyze-btn" data-task-id="${escapeHtml(task.id || "")}" ${task.analysis || !needCloud ? "disabled" : ""}>云端分析</button>
+          <button type="button" class="edge-analyze-btn" data-task-id="${escapeHtml(task.id || "")}">
+            ${task.analysis ? '重新研判' : '云端分析'}
+          </button>
         </div>
       </div>
     `;
@@ -1649,7 +1731,7 @@ function renderEdgeDevicesDashboard(devices, container) {
     
     const pendingCount = device.pending_events || 0;
     const pendingHtml = pendingCount > 0
-      ? `<div class="device-metric-row warning-row">
+      ? `<div class="device-metric-row warning-row" data-tooltip="待发重传缓存：当边缘端与云端网络中断时，检测事件包会被安全缓存到本地待发队列中，重连后自动重传。">
            <span class="metric-label">📦 待发重传缓存</span>
            <span class="metric-val text-cloud">${pendingCount} 个待挂起事件</span>
          </div>`
@@ -1677,9 +1759,9 @@ function renderEdgeDevicesDashboard(devices, container) {
           <div class="device-metric-group">
             <h5>📊 硬件指标实时状态</h5>
             
-            <div class="device-metric-row">
+            <div class="device-metric-row" data-tooltip="系统平均负载 (Loadavg 1m)：过去1分钟内处于可运行或等待状态的平均任务数。当负载高于CPU核心数时，表示系统出现算力拥堵。">
               <div class="metric-row-label">
-                <span>系统平均负载 (CPU Load 1m)</span>
+                <span>系统平均负载 (CPU Load 1m) ⓘ</span>
                 <strong>负载: ${loadVal}</strong>
               </div>
               <div class="metric-progress-bg">
@@ -1687,9 +1769,9 @@ function renderEdgeDevicesDashboard(devices, container) {
               </div>
             </div>
             
-            <div class="device-metric-row">
+            <div class="device-metric-row" data-tooltip="系统内存使用率：边端设备当前使用的物理内存（RAM）比例。可用空间不足可能会导致推理进程被系统强制终止。">
               <div class="metric-row-label">
-                <span>系统内存使用率 (RAM Memory)</span>
+                <span>系统内存使用率 (RAM Memory) ⓘ</span>
                 <strong>${memText}</strong>
               </div>
               <div class="metric-progress-bg">
@@ -1698,9 +1780,9 @@ function renderEdgeDevicesDashboard(devices, container) {
             </div>
             
             ${npu.utilization_percent !== undefined ? `
-            <div class="device-metric-row">
+            <div class="device-metric-row" data-tooltip="昇腾 NPU 核心利用率：达芬奇架构 AI 核心（AI Core）的计算负载比例。反映了 YOLO 神经网络推理的芯片资源占用。">
               <div class="metric-row-label">
-                <span>昇腾 NPU 核心利用率</span>
+                <span>昇腾 NPU 核心利用率 ⓘ</span>
                 <strong>使用率: ${npuPct}% (温度: ${npuTemp})</strong>
               </div>
               <div class="metric-progress-bg">
@@ -1710,9 +1792,9 @@ function renderEdgeDevicesDashboard(devices, container) {
             ` : ''}
             
             ${npu.memory_used_percent !== undefined ? `
-            <div class="device-metric-row">
+            <div class="device-metric-row" data-tooltip="昇腾 NPU 显存使用率：用于存放 YOLO 神经网络模型参数和特征图的专用高速显存空间占用量。">
               <div class="metric-row-label">
-                <span>昇腾 NPU 显存使用率</span>
+                <span>昇腾 NPU 显存使用率 ⓘ</span>
                 <strong>显存: ${npu.memory_used_percent}% (${npu.memory_used_mb}/${npu.memory_total_mb} MB)</strong>
               </div>
               <div class="metric-progress-bg">
@@ -2548,9 +2630,54 @@ tabButtons.forEach(btn => {
   });
 });
 
-// Restore active tab
-const savedTab = localStorage.getItem(ACTIVE_TAB_KEY) || "history";
-switchTab(savedTab);
+// ====== Mode Switcher and Tab Filtering ======
+const modeSwitchBtns = document.querySelectorAll(".mode-switch-btn");
+
+function switchMode(mode) {
+  modeSwitchBtns.forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+
+  const tabBtns = document.querySelectorAll(".tab-btn");
+  if (mode === "travel") {
+    // Show travel tabs, hide edge tabs
+    tabBtns.forEach(btn => {
+      const isTravelTab = btn.dataset.tab === "history" || btn.dataset.tab === "skills";
+      btn.style.display = isTravelTab ? "flex" : "none";
+    });
+    // Fallback if current active tab is not travel
+    const activeTab = localStorage.getItem(ACTIVE_TAB_KEY) || "history";
+    if (activeTab !== "history" && activeTab !== "skills") {
+      switchTab("history");
+    } else {
+      switchTab(activeTab);
+    }
+  } else if (mode === "edge") {
+    // Show edge tabs, hide travel tabs
+    tabBtns.forEach(btn => {
+      const isEdgeTab = btn.dataset.tab === "edge" || btn.dataset.tab === "status";
+      btn.style.display = isEdgeTab ? "flex" : "none";
+    });
+    // Fallback if current active tab is not edge
+    const activeTab = localStorage.getItem(ACTIVE_TAB_KEY) || "edge";
+    if (activeTab !== "edge" && activeTab !== "status") {
+      switchTab("edge");
+    } else {
+      switchTab(activeTab);
+    }
+  }
+  localStorage.setItem("active_mode", mode);
+}
+
+modeSwitchBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    switchMode(btn.dataset.mode);
+  });
+});
+
+// Restore active tab & mode
+const savedMode = localStorage.getItem("active_mode") || "travel";
+switchMode(savedMode);
 
 function setSidebarCollapsed(collapsed) {
   if (collapsed) {
@@ -2610,6 +2737,7 @@ const refreshEdgeDashboardBtn = document.querySelector("#refreshEdgeDashboardBtn
 if (refreshEdgeDashboardBtn) {
   refreshEdgeDashboardBtn.addEventListener("click", loadEdgeTasks);
 }
+
 
 setInterval(loadEdgeTasks, 10000);
 

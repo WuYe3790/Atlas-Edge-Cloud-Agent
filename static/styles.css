@@ -3418,3 +3418,188 @@ textarea {
   }
 }
 
+/* Force standard hidden attribute behavior in CSS to prevent grid layout breaking */
+[hidden] {
+  display: none !important;
+}
+
+/* ====== Mode Switcher ====== */
+.mode-switcher-container {
+  display: flex;
+  padding: 10px 16px;
+  background: rgba(241, 245, 249, 0.4);
+  border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.mode-switch-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition: all 0.25s ease;
+}
+
+.mode-switch-btn:hover {
+  color: #0f172a;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.mode-switch-btn.active {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--accent), #2563eb);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
+}
+
+/* ====== Mock heartbeat button ====== */
+.dashboard-mock-btn {
+  padding: 6px 14px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.05);
+  color: #047857;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: var(--small-shadow);
+  transition: all 0.2s ease;
+}
+
+.dashboard-mock-btn:hover {
+  background: #d1fae5;
+  border-color: #10b981;
+}
+
+/* ====== Agent Analysis Card Box ====== */
+.agent-analysis-card-box {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-box-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.agent-avatar-mini {
+  font-size: 14px;
+}
+
+.agent-box-header strong {
+  color: var(--text);
+  font-weight: 700;
+  flex: 1;
+}
+
+.risk-badge-mini {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.risk-badge-mini.low {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.risk-badge-mini.medium {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.risk-badge-mini.high {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.agent-box-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-box-body p {
+  margin: 0;
+}
+
+.analysis-semantics {
+  color: #334155;
+}
+
+.analysis-advice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.analysis-advice-list strong {
+  color: var(--text);
+}
+
+.analysis-advice-list ul {
+  margin: 0;
+  padding-left: 16px;
+  color: #475569;
+}
+
+.analysis-advice-list li {
+  margin-bottom: 2px;
+}
+
+/* ====== Tooltips ====== */
+[data-tooltip] {
+  position: relative;
+  cursor: help;
+}
+
+[data-tooltip]::before {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0f172a;
+  color: #ffffff;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  width: 220px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 100;
+}
+
+[data-tooltip]:hover::before {
+  opacity: 1;
+}
+
+
+. e d g e - c l o u d - p a n e l [ h i d d e n ]   {   d i s p l a y :   n o n e   ! i m p o r t a n t ;   }  
+ 

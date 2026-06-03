@@ -72,6 +72,7 @@ def edge_heartbeat():
     return jsonify({"ok": True, "device": device})
 
 
+
 @edge_bp.get("/api/edge/tasks")
 def edge_tasks():
     raw_limit = request.args.get("limit", "30")
