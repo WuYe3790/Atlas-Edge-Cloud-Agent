@@ -117,6 +117,27 @@ def check_scheduling(client: Any, results: list[CheckResult]) -> None:
             False,
             True,
         ),
+        (
+            "high load goes cloud",
+            {
+                "summary": {"total_count": 1, "class_counts": {"sports_ball": 1}, "person_count": 0, "vehicle_count": 0},
+                "detections": [{"class_name": "sports_ball", "confidence": 0.95}],
+                "system_metrics": {"loadavg": {"1m": 17.0, "5m": 12.0, "15m": 8.0}},
+            },
+            False,
+            True,
+        ),
+        (
+            "calibrated high load stays local",
+            {
+                "summary": {"total_count": 1, "class_counts": {"sports_ball": 1}, "person_count": 0, "vehicle_count": 0},
+                "detections": [{"class_name": "sports_ball", "confidence": 0.95}],
+                "system_metrics": {"loadavg": {"1m": 17.0, "5m": 12.0, "15m": 8.0}},
+                "load_threshold": 20.0,
+            },
+            True,
+            False,
+        ),
     ]
     for name, payload, handled_locally, need_cloud in cases:
         response = client.post("/api/edge/scheduling/validate", payload)

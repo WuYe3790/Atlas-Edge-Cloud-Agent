@@ -329,8 +329,9 @@ python3 atlas_yolo_detect_and_upload.py \
    - 当前无摄像头条件下继续使用静态图片上传即可完成边云协同闭环。
 
 2. **调度阈值实测校准**
-   - 当前高负载阈值为 `loadavg 1m > 2.0`；
-   - Atlas 上空闲 loadavg 可能偏高，建议根据实测情况调整，避免所有任务都因负载被强制上云。
+   - 默认高负载阈值为 `loadavg 1m > 2.0`；
+   - 边端脚本已支持 `--load-threshold`，服务端 `/api/edge/scheduling/validate` 已支持 `load_threshold`；
+   - Atlas 上空闲 loadavg 可能偏高，实测时可用 `--load-threshold 20` 等值校准，避免所有任务都因负载被强制上云。
 
 ### 低优先级
 

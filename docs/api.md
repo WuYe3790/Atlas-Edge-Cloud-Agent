@@ -179,6 +179,7 @@ Request:
     }
   ],
   "system_metrics": {},
+  "load_threshold": 2.0,
   "force_cloud": false
 }
 ```
@@ -195,6 +196,8 @@ Request:
   }
 }
 ```
+
+`load_threshold` 可选，默认值为 `2.0`，表示当 `loadavg 1m` 高于该值时触发云端卸载。Atlas 实测空闲负载偏高时，可用 `20.0` 等更贴近开发板实际状态的阈值进行校准。
 
 ## 本地验证脚本
 

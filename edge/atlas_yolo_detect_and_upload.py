@@ -26,6 +26,7 @@ DEFAULT_CFG = {
     "iou_thres": 0.5,
     "input_shape": [640, 640],
 }
+DEFAULT_LOAD_THRESHOLD = 2.0
 
 
 def utc_now() -> str:
@@ -77,6 +78,7 @@ def compute_scheduling_decision(
     detections: list[dict[str, Any]],
     system_metrics: dict[str, Any],
     force_cloud: bool = False,
+    load_threshold: float = DEFAULT_LOAD_THRESHOLD,
 ) -> dict[str, Any]:
     """Multi-factor scheduling decision for edge-cloud task dispatch.
 
@@ -140,11 +142,11 @@ def compute_scheduling_decision(
         load_1m = float(load_1m)
     except (TypeError, ValueError):
         load_1m = 0
-    if load_1m > 2.0:
+    if load_1m > load_threshold:
         return {
             "handled_locally": False,
             "need_cloud_analysis": True,
-            "reason": f"边端负载较高（loadavg 1m={load_1m:.1f}），卸载至云端处理。",
+            "reason": f"边端负载较高（loadavg 1m={load_1m:.1f}，阈值={load_threshold:.1f}），卸载至云端处理。",
         }
 
     return {
@@ -276,6 +278,7 @@ def build_event(
     edge_decision = compute_scheduling_decision(
         summary, detections, system_metrics,
         force_cloud=args.force_cloud,
+        load_threshold=args.load_threshold,
     )
     if args.reason:
         edge_decision["reason"] = args.reason
@@ -301,6 +304,9 @@ def build_event(
         "summary": summary,
         "system_metrics": system_metrics,
         "edge_decision": edge_decision,
+        "scheduling_config": {
+            "load_threshold": args.load_threshold,
+        },
     }
     if annotated_image_path and annotated_image_path.exists() and not args.no_image_payload:
         event["annotated_image"] = {
@@ -391,6 +397,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-analyze", action="store_true", help="Upload only, do not trigger cloud agent analysis")
     parser.add_argument("--no-image-payload", action="store_true", help="Do not include annotated image base64 in uploaded event")
     parser.add_argument("--force-cloud", action="store_true")
+    parser.add_argument("--load-threshold", type=float, default=DEFAULT_LOAD_THRESHOLD, help="loadavg 1m threshold for cloud offload decisions")
     parser.add_argument("--reason", default="")
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument("--retry-pending", action="store_true", help="Retry all pending events from pending_events/ directory")

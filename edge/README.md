@@ -103,3 +103,28 @@ fps: 16.54
 Add `--analyze` to trigger cloud LLM agent analysis immediately.
 
 Current behavior: upload triggers cloud analysis by default. Add `--no-analyze` when you only want to store the edge event.
+
+## 5. Calibrate Edge Load Scheduling
+
+The default cloud offload threshold is `loadavg 1m > 2.0`. On Atlas, the load average may be much higher than a laptop even when the board is usable. If normal single-image inference is always classified as high load, raise the threshold during the run:
+
+```bash
+python3 atlas_yolo_detect_and_upload.py \
+  --image world_cup.jpg \
+  --model yolo.om \
+  --labels coco_names.txt \
+  --server http://192.168.0.101:5000 \
+  --upload \
+  --load-threshold 20
+```
+
+The same option is available in the manual upload client:
+
+```bash
+python3 atlas_upload_client.py \
+  --server http://192.168.0.101:5000 \
+  --image test.jpg \
+  --detections-json detections.json \
+  --load-threshold 20 \
+  --analyze
+```

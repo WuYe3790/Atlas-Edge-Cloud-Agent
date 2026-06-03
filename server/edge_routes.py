@@ -24,6 +24,7 @@ from travel_agent.storage import (
 
 edge_bp = Blueprint("edge", __name__)
 EDGE_ARTIFACT_DIR = PROJECT_ROOT / "data" / "edge_artifacts"
+DEFAULT_LOAD_THRESHOLD = 2.0
 
 
 @edge_bp.post("/api/edge/events")
@@ -627,6 +628,7 @@ def _compute_scheduling(
     detections: list[dict[str, Any]],
     system_metrics: dict[str, Any],
     force_cloud: bool = False,
+    load_threshold: float = DEFAULT_LOAD_THRESHOLD,
 ) -> dict[str, Any]:
     """Server-side scheduling decision matching edge-side logic."""
     if force_cloud:
@@ -678,11 +680,11 @@ def _compute_scheduling(
         load_1m_val = float(loadavg.get("1m", 0) or 0)
     else:
         load_1m_val = 0
-    if load_1m_val > 2.0:
+    if load_1m_val > load_threshold:
         return {
             "handled_locally": False,
             "need_cloud_analysis": True,
-            "reason": f"边端负载较高（loadavg 1m={load_1m_val:.1f}），卸载至云端处理。",
+            "reason": f"边端负载较高（loadavg 1m={load_1m_val:.1f}，阈值={load_threshold:.1f}），卸载至云端处理。",
         }
     return {
         "handled_locally": True,
@@ -699,7 +701,17 @@ def validate_scheduling():
     detections = body.get("detections") if isinstance(body.get("detections"), list) else []
     system_metrics = body.get("system_metrics") if isinstance(body.get("system_metrics"), dict) else {}
     force_cloud = bool(body.get("force_cloud", False))
-    decision = _compute_scheduling(summary, detections, system_metrics, force_cloud=force_cloud)
+    try:
+        load_threshold = float(body.get("load_threshold", DEFAULT_LOAD_THRESHOLD))
+    except (TypeError, ValueError):
+        load_threshold = DEFAULT_LOAD_THRESHOLD
+    decision = _compute_scheduling(
+        summary,
+        detections,
+        system_metrics,
+        force_cloud=force_cloud,
+        load_threshold=load_threshold,
+    )
     return jsonify({"ok": True, "decision": decision})
 
 

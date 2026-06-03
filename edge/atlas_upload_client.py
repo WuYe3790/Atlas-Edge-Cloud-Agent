@@ -13,6 +13,8 @@ from typing import Any
 
 import requests
 
+DEFAULT_LOAD_THRESHOLD = 2.0
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -92,6 +94,7 @@ def compute_scheduling_decision(
     detections: list[dict[str, Any]],
     system_metrics: dict[str, Any],
     force_cloud: bool = False,
+    load_threshold: float = DEFAULT_LOAD_THRESHOLD,
 ) -> dict[str, Any]:
     """Multi-factor scheduling decision for edge-cloud task dispatch.
 
@@ -163,11 +166,11 @@ def compute_scheduling_decision(
             load_1m_val = 0
     else:
         load_1m_val = 0
-    if load_1m_val > 2.0:
+    if load_1m_val > load_threshold:
         return {
             "handled_locally": False,
             "need_cloud_analysis": True,
-            "reason": f"边端负载较高（loadavg 1m={load_1m_val:.1f}），卸载至云端处理。",
+            "reason": f"边端负载较高（loadavg 1m={load_1m_val:.1f}，阈值={load_threshold:.1f}），卸载至云端处理。",
         }
 
     return {
@@ -194,6 +197,7 @@ def build_event(args: argparse.Namespace) -> dict[str, Any]:
     edge_decision = compute_scheduling_decision(
         summary, detections, system_metrics,
         force_cloud=args.force_cloud,
+        load_threshold=args.load_threshold,
     )
     if args.reason:
         edge_decision["reason"] = args.reason
@@ -213,6 +217,9 @@ def build_event(args: argparse.Namespace) -> dict[str, Any]:
         "summary": summary,
         "system_metrics": system_metrics,
         "edge_decision": edge_decision,
+        "scheduling_config": {
+            "load_threshold": args.load_threshold,
+        },
     }
 
 
@@ -319,6 +326,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=float, default=None)
     parser.add_argument("--reason", default="")
     parser.add_argument("--force-cloud", action="store_true", help="Always mark this event as needing cloud analysis")
+    parser.add_argument("--load-threshold", type=float, default=DEFAULT_LOAD_THRESHOLD, help="loadavg 1m threshold for cloud offload decisions")
     parser.add_argument("--analyze", action="store_true", help="Ask cloud agent to analyze the task after upload")
     parser.add_argument("--health", action="store_true", help="Only check /api/health")
     parser.add_argument("--heartbeat", action="store_true", help="Send device heartbeat to /api/edge/heartbeat")
