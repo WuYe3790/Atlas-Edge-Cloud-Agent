@@ -101,3 +101,5 @@ fps: 16.54
 ```
 
 Add `--analyze` to trigger cloud LLM agent analysis immediately.
+
+Current behavior: upload triggers cloud analysis by default. Add `--no-analyze` when you only want to store the edge event.

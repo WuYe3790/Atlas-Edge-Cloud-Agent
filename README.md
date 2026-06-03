@@ -145,6 +145,8 @@ summary.json
 annotated.jpg
 ```
 
+The upload event also includes the annotated image. The laptop dashboard stores it under `data/edge_artifacts/` and displays it in the edge task card.
+
 Example real result:
 
 ```text
@@ -155,7 +157,9 @@ fps: 16.54
 detections: 2 person, 1 sports_ball
 ```
 
-Trigger cloud agent analysis as well:
+The script triggers cloud agent analysis by default after upload. To upload without analysis, add `--no-analyze`.
+
+Run with explicit cloud analysis:
 
 ```bash
 python3 atlas_yolo_detect_and_upload.py \

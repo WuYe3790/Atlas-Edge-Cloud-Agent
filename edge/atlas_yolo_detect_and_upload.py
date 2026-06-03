@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import socket
 import time
@@ -104,10 +105,16 @@ def run_yolo(image_path: Path, model_path: Path, label_path: Path, cfg: dict[str
     return detections, latency_ms
 
 
-def build_event(args: argparse.Namespace, detections: list[dict[str, Any]], summary: dict[str, Any], latency_ms: float) -> dict[str, Any]:
+def build_event(
+    args: argparse.Namespace,
+    detections: list[dict[str, Any]],
+    summary: dict[str, Any],
+    latency_ms: float,
+    annotated_image_path: Path | None = None,
+) -> dict[str, Any]:
     fps = 1000.0 / latency_ms if latency_ms > 0 else None
     need_cloud = args.force_cloud or summary["total_count"] > 0
-    return {
+    event = {
         "device_id": args.device_id,
         "hostname": socket.gethostname(),
         "timestamp": utc_now(),
@@ -129,6 +136,13 @@ def build_event(args: argparse.Namespace, detections: list[dict[str, Any]], summ
             "reason": args.reason or ("YOLO detected targets; cloud semantic analysis requested." if need_cloud else "No target detected."),
         },
     }
+    if annotated_image_path and annotated_image_path.exists() and not args.no_image_payload:
+        event["annotated_image"] = {
+            "filename": annotated_image_path.name,
+            "mime_type": "image/jpeg",
+            "base64": base64.b64encode(annotated_image_path.read_bytes()).decode("ascii"),
+        }
+    return event
 
 
 def post_json(url: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
@@ -150,7 +164,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--summary-json", default="summary.json")
     parser.add_argument("--annotated-image", default="annotated.jpg")
     parser.add_argument("--upload", action="store_true")
-    parser.add_argument("--analyze", action="store_true")
+    parser.add_argument("--analyze", action="store_true", help="Deprecated: upload already triggers analysis by default")
+    parser.add_argument("--no-analyze", action="store_true", help="Upload only, do not trigger cloud agent analysis")
+    parser.add_argument("--no-image-payload", action="store_true", help="Do not include annotated image base64 in uploaded event")
     parser.add_argument("--force-cloud", action="store_true")
     parser.add_argument("--reason", default="")
     parser.add_argument("--timeout", type=int, default=60)
@@ -175,9 +191,10 @@ def main() -> int:
     Path(args.summary_json).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     image = cv2.imread(str(image_path))
-    cv2.imwrite(args.annotated_image, draw_detections(image, detections))
+    annotated_image_path = Path(args.annotated_image)
+    cv2.imwrite(str(annotated_image_path), draw_detections(image, detections))
 
-    event = build_event(args, detections, summary, latency_ms)
+    event = build_event(args, detections, summary, latency_ms, annotated_image_path=annotated_image_path)
     print(json.dumps(event, ensure_ascii=False, indent=2))
 
     if args.upload:
@@ -185,7 +202,8 @@ def main() -> int:
             raise ValueError("--server is required when --upload is set")
         result = post_json(args.server.rstrip("/") + "/api/edge/events", event, args.timeout)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        if args.analyze and result.get("task_id"):
+        should_analyze = not args.no_analyze
+        if should_analyze and result.get("task_id"):
             analysis = post_json(
                 args.server.rstrip("/") + "/api/edge/analyze",
                 {"task_id": result["task_id"]},

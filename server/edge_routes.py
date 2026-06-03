@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import base64
+from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_from_directory
 
+from server.bootstrap import PROJECT_ROOT
 from travel_agent.agent import run_agent_with_trace
 from travel_agent.config import load_llm_config
 from travel_agent.storage import (
@@ -12,10 +15,12 @@ from travel_agent.storage import (
     get_edge_task,
     list_edge_tasks,
     update_edge_task_analysis,
+    update_edge_task_event,
 )
 
 
 edge_bp = Blueprint("edge", __name__)
+EDGE_ARTIFACT_DIR = PROJECT_ROOT / "data" / "edge_artifacts"
 
 
 @edge_bp.post("/api/edge/events")
@@ -26,6 +31,8 @@ def receive_edge_event():
 
     event = _normalize_edge_event(event)
     task = create_edge_task(event, status="received")
+    event = _save_embedded_artifacts(task["id"], event)
+    task = update_edge_task_event(task["id"], event) or task
     need_cloud_analysis = bool(event.get("edge_decision", {}).get("need_cloud_analysis", True))
     return jsonify(
         {
@@ -53,6 +60,11 @@ def edge_task_detail(task_id: str):
     if not task:
         return jsonify({"ok": False, "error": "Task not found"}), 404
     return jsonify({"ok": True, "task": task})
+
+
+@edge_bp.get("/api/edge/artifacts/<path:filename>")
+def edge_artifact(filename: str):
+    return send_from_directory(EDGE_ARTIFACT_DIR, filename)
 
 
 @edge_bp.post("/api/edge/analyze")
@@ -101,6 +113,35 @@ def _normalize_edge_event(event: dict[str, Any]) -> dict[str, Any]:
         },
     )
     return normalized
+
+
+def _save_embedded_artifacts(task_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    image_payload = event.pop("annotated_image", None)
+    if not isinstance(image_payload, dict):
+        return event
+    raw_base64 = image_payload.get("base64")
+    if not isinstance(raw_base64, str) or not raw_base64:
+        return event
+    try:
+        image_bytes = base64.b64decode(raw_base64, validate=True)
+    except Exception:
+        return event
+    if not image_bytes:
+        return event
+    EDGE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    filename = _safe_artifact_name(task_id, image_payload.get("filename") or "annotated.jpg")
+    path = EDGE_ARTIFACT_DIR / filename
+    path.write_bytes(image_bytes)
+    event["annotated_image_url"] = f"/api/edge/artifacts/{filename}"
+    event["annotated_image_filename"] = filename
+    return event
+
+
+def _safe_artifact_name(task_id: str, filename: Any) -> str:
+    suffix = Path(str(filename)).suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+        suffix = ".jpg"
+    return f"{task_id}-annotated{suffix}"
 
 
 def _summarize_detections(detections: Any) -> dict[str, Any]:

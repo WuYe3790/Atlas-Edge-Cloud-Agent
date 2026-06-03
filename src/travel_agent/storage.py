@@ -243,6 +243,33 @@ def update_edge_task_analysis(task_id: str, analysis: dict[str, Any], status: st
     return get_edge_task(task_id)
 
 
+def update_edge_task_event(task_id: str, event: dict[str, Any], status: str | None = None) -> dict[str, Any] | None:
+    now = utc_now()
+    event_json = json.dumps(event, ensure_ascii=False)
+    with get_connection() as conn:
+        if status is None:
+            cursor = conn.execute(
+                """
+                UPDATE edge_tasks
+                SET event_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (event_json, now, task_id),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE edge_tasks
+                SET event_json = ?, status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (event_json, status, now, task_id),
+            )
+    if cursor.rowcount == 0:
+        return None
+    return get_edge_task(task_id)
+
+
 def _edge_task_from_row(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
     item["event"] = json.loads(item.pop("event_json") or "{}")

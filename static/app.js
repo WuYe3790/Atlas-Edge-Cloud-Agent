@@ -1436,8 +1436,11 @@ function renderEdgeTasks(tasks) {
     const analysisText = task.analysis?.answer
       ? `<div class="edge-task-analysis">${escapeHtml(task.analysis.answer).slice(0, 140)}${task.analysis.answer.length > 140 ? "..." : ""}</div>`
       : "";
+    const imageUrl = event.annotated_image_url || "";
+    const dispatchReason = event.edge_decision?.reason || "";
     return `
       <div class="edge-task-card" data-edge-task-id="${escapeHtml(task.id || "")}">
+        ${imageUrl ? `<img class="edge-task-image" src="${escapeHtml(imageUrl)}" alt="Atlas YOLO annotated result" loading="lazy">` : ""}
         <div class="edge-task-main">
           <strong>${escapeHtml(task.image_id || event.image_id || "未命名图片")}</strong>
           <span>${escapeHtml(task.device_id || event.device_id || "unknown-device")}</span>
@@ -1447,6 +1450,11 @@ function renderEdgeTasks(tasks) {
           <span>${escapeHtml(countText)}</span>
           <span>${escapeHtml(perfText)}</span>
           <span>${task.analysis ? "已分析" : "待分析"}</span>
+        </div>
+        <div class="edge-task-flow">
+          <div><b>边端</b>YOLO 本地推理，生成检测框和数量摘要</div>
+          <div><b>调度</b>${escapeHtml(dispatchReason || "检测结果上传云端")}</div>
+          <div><b>云端</b>${task.analysis ? "Agent 已生成场景理解和建议" : "等待 Agent 分析"}</div>
         </div>
         ${analysisText}
         <div class="edge-task-actions">

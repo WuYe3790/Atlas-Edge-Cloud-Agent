@@ -2337,6 +2337,14 @@ textarea {
   gap: 6px;
 }
 
+.edge-task-image {
+  width: 100%;
+  max-height: 180px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #f8fafc;
+}
+
 .edge-task-main {
   display: grid;
   gap: 2px;
@@ -2376,6 +2384,24 @@ textarea {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.edge-task-flow {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.edge-task-flow b {
+  display: inline-flex;
+  min-width: 38px;
+  margin-right: 6px;
+  color: #9a3412;
 }
 
 .edge-task-actions {
