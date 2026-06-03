@@ -69,6 +69,37 @@ def summarize(detections: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def collect_system_metrics() -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    try:
+        load1, load5, load15 = (float(value) for value in Path("/proc/loadavg").read_text().split()[:3])
+        metrics["loadavg"] = {"1m": load1, "5m": load5, "15m": load15}
+    except Exception:
+        pass
+    try:
+        meminfo: dict[str, int] = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, value = line.split(":", 1)
+            meminfo[key] = int(value.strip().split()[0])
+        total = meminfo.get("MemTotal")
+        available = meminfo.get("MemAvailable")
+        if total and available is not None:
+            used = total - available
+            metrics["memory"] = {
+                "total_mb": round(total / 1024, 1),
+                "available_mb": round(available / 1024, 1),
+                "used_percent": round(used / total * 100, 1),
+            }
+    except Exception:
+        pass
+    try:
+        uptime_seconds = float(Path("/proc/uptime").read_text().split()[0])
+        metrics["uptime_seconds"] = round(uptime_seconds, 1)
+    except Exception:
+        pass
+    return metrics
+
+
 def run_yolo(image_path: Path, model_path: Path, label_path: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
     image = cv2.imread(str(image_path))
     if image is None:
@@ -130,6 +161,7 @@ def build_event(
         },
         "detections": detections,
         "summary": summary,
+        "system_metrics": collect_system_metrics(),
         "edge_decision": {
             "handled_locally": True,
             "need_cloud_analysis": need_cloud,

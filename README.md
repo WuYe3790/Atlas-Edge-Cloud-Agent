@@ -254,3 +254,9 @@ Ignored files:
 - course requirement document
 
 Do not commit real API keys.
+
+## Documentation
+
+- `docs/design.md`: system architecture and module design.
+- `docs/api.md`: cloud service API documentation.
+- `docs/demo.md`: demo script and presentation flow.

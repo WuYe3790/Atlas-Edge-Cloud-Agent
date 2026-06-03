@@ -14,6 +14,7 @@ const trainStatus = document.querySelector("#trainStatus");
 const aviationStatus = document.querySelector("#aviationStatus");
 const hotelStatus = document.querySelector("#hotelStatus");
 const locationStatus = document.querySelector("#locationStatus");
+const edgeDevicesListEl = document.querySelector("#edgeDevicesList");
 const edgeTasksListEl = document.querySelector("#edgeTasksList");
 const refreshEdgeTasksBtn = document.querySelector("#refreshEdgeTasksBtn");
 const conversationListEl = document.querySelector("#conversationList");
@@ -1469,14 +1470,55 @@ function renderEdgeTasks(tasks) {
 }
 
 async function loadEdgeTasks() {
-  if (!edgeTasksListEl) return;
+  if (!edgeTasksListEl && !edgeDevicesListEl) return;
   try {
-    const response = await fetch("/api/edge/tasks?limit=8");
-    const data = await response.json();
-    renderEdgeTasks(data.tasks || []);
+    const [tasksResponse, statusResponse] = await Promise.all([
+      fetch("/api/edge/tasks?limit=8"),
+      fetch("/api/edge/status"),
+    ]);
+    const tasksData = await tasksResponse.json();
+    const statusData = await statusResponse.json();
+    renderEdgeDevices(statusData.devices || []);
+    renderEdgeTasks(tasksData.tasks || []);
   } catch {
-    edgeTasksListEl.innerHTML = '<div class="edge-empty">边端任务读取失败</div>';
+    if (edgeDevicesListEl) edgeDevicesListEl.innerHTML = '<div class="edge-empty">设备状态读取失败</div>';
+    if (edgeTasksListEl) edgeTasksListEl.innerHTML = '<div class="edge-empty">边端任务读取失败</div>';
   }
+}
+
+function renderEdgeDevices(devices) {
+  if (!edgeDevicesListEl) return;
+  if (!devices || !devices.length) {
+    edgeDevicesListEl.innerHTML = '<div class="edge-empty">暂无设备状态</div>';
+    return;
+  }
+  edgeDevicesListEl.innerHTML = devices.map((device) => {
+    const metrics = device.system_metrics || {};
+    const memory = metrics.memory || {};
+    const loadavg = metrics.loadavg || {};
+    const perf = device.latest_fps
+      ? `${device.latest_fps} FPS`
+      : (device.latest_latency_ms ? `${device.latest_latency_ms} ms` : "no perf");
+    const memoryText = memory.used_percent !== undefined ? `内存 ${memory.used_percent}%` : "内存未知";
+    const loadText = loadavg["1m"] !== undefined ? `负载 ${loadavg["1m"]}` : "负载未知";
+    return `
+      <div class="edge-device-card">
+        <div class="edge-device-main">
+          <strong>${escapeHtml(device.device_id || "unknown-device")}</strong>
+          <span>${escapeHtml(device.hostname || "unknown-host")}</span>
+        </div>
+        <div class="edge-task-meta">
+          <span class="${device.online ? "online-chip" : "offline-chip"}">${device.online ? "在线" : "离线"}</span>
+          <span>${escapeHtml(perf)}</span>
+          <span>${escapeHtml(memoryText)}</span>
+          <span>${escapeHtml(loadText)}</span>
+        </div>
+        <div class="edge-device-sub">
+          最近任务：${escapeHtml(device.latest_image_id || "无")} · ${escapeHtml(String(device.age_seconds ?? "未知"))} 秒前
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 async function analyzeEdgeTask(taskId, button) {

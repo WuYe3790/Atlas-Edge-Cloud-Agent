@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import base64
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 from flask import Blueprint, jsonify, request, send_from_directory
@@ -52,6 +53,35 @@ def edge_tasks():
     except ValueError:
         limit = 30
     return jsonify({"ok": True, "tasks": list_edge_tasks(limit=limit)})
+
+
+@edge_bp.get("/api/edge/status")
+def edge_status():
+    tasks = list_edge_tasks(limit=200)
+    devices: dict[str, dict[str, Any]] = {}
+    now = datetime.now(timezone.utc)
+    for task in tasks:
+        event = task.get("event") or {}
+        device_id = str(task.get("device_id") or event.get("device_id") or "unknown-device")
+        if device_id in devices:
+            continue
+        updated_at = str(task.get("updated_at") or "")
+        age_seconds = _age_seconds(updated_at, now)
+        inference = event.get("inference") if isinstance(event.get("inference"), dict) else {}
+        devices[device_id] = {
+            "device_id": device_id,
+            "hostname": event.get("hostname") or "",
+            "online": age_seconds is not None and age_seconds <= 300,
+            "age_seconds": age_seconds,
+            "last_seen": updated_at,
+            "latest_task_id": task.get("id"),
+            "latest_image_id": task.get("image_id"),
+            "latest_status": task.get("status"),
+            "latest_fps": inference.get("fps"),
+            "latest_latency_ms": inference.get("latency_ms"),
+            "system_metrics": event.get("system_metrics") if isinstance(event.get("system_metrics"), dict) else {},
+        }
+    return jsonify({"ok": True, "devices": list(devices.values()), "task_count": len(tasks)})
 
 
 @edge_bp.get("/api/edge/tasks/<task_id>")
@@ -142,6 +172,18 @@ def _safe_artifact_name(task_id: str, filename: Any) -> str:
     if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
         suffix = ".jpg"
     return f"{task_id}-annotated{suffix}"
+
+
+def _age_seconds(value: str, now: datetime) -> float | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return round((now - dt).total_seconds(), 1)
 
 
 def _summarize_detections(detections: Any) -> dict[str, Any]:

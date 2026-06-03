@@ -35,6 +35,18 @@ def summarize_detections(detections: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def collect_system_metrics() -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for path, key in (("/proc/loadavg", "loadavg"), ("/proc/uptime", "uptime")):
+        try:
+            raw = Path(path).read_text().strip()
+        except Exception:
+            raw = ""
+        if raw:
+            metrics[key] = raw
+    return metrics
+
+
 def build_event(args: argparse.Namespace) -> dict[str, Any]:
     detections = load_json(args.detections_json)
     if detections is None:
@@ -63,6 +75,7 @@ def build_event(args: argparse.Namespace) -> dict[str, Any]:
         },
         "detections": detections,
         "summary": summary,
+        "system_metrics": collect_system_metrics(),
         "edge_decision": {
             "handled_locally": True,
             "need_cloud_analysis": need_cloud_analysis,
