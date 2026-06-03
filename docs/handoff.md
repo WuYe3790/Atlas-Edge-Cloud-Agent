@@ -32,7 +32,7 @@ Atlas 边端 YOLO 推理
 -> 管理平台展示设备状态、边端任务、调度链路和分析结果
 ```
 
-当前采用“笔记本作为本地云端”的架构。Atlas 不需要直连外网，只要能访问笔记本：
+当前采用"笔记本作为本地云端"的架构。Atlas 不需要直连外网，只要能访问笔记本：
 
 ```text
 http://192.168.0.101:5000
@@ -117,6 +117,7 @@ GET  /api/edge/tasks/<task_id>/report
 GET  /api/edge/status
 GET  /api/edge/artifacts/<filename>
 POST /api/edge/analyze
+POST /api/edge/scheduling/validate    ← 新增
 ```
 
 核心代码：
@@ -128,19 +129,22 @@ src/travel_agent/storage.py
 
 ### 2.5 管理平台
 
-状态页已新增：
+状态页已包括：
 
 - Atlas 设备状态；
 - 在线/离线；
 - 最近任务；
 - 最近 FPS/延迟；
 - 内存与负载；
+- 待重传事件数量；
 - YOLO 标注图；
 - 检测摘要；
 - 边端、调度、云端三段流程；
+- 上云/本地调度标签 + 调度因子（人:N 车:N）；
 - 云端分析摘要；
 - 云端分析按钮；
-- 导出报告链接。
+- 导出报告链接；
+- 任务详情弹窗（完整检测表、系统指标、分析结果、Agent 追踪链）。
 
 前端相关文件：
 
@@ -174,6 +178,42 @@ docs/handoff.md
 README.md
 edge/README.md
 ```
+
+### 2.8 智能调度、任务详情、离线重传、RAG 与报告增强（本轮新增）
+
+本轮（2026-06-03）新增以下功能：
+
+**智能自动调度规则**
+
+- 两个边端脚本（`edge/atlas_yolo_detect_and_upload.py`、`edge/atlas_upload_client.py`）中新增 `compute_scheduling_decision()` 函数。
+- 6 条多因子调度规则按优先级执行：`--force-cloud` → 零目标 → 有人 → 有车 → 低置信度(<0.7) → 高负载(loadavg 1m > 2.0) → 默认本地。
+- 调度决策包含 `handled_locally`、`need_cloud_analysis` 和 `reason` 三个字段。
+- 服务端 `server/edge_routes.py` 新增 `POST /api/edge/scheduling/validate` 验证端点。
+- 前端任务卡片新增"上云/本地"标签和调度因子 chips。
+
+**任务详情弹窗**
+
+- `templates/index.html` 新增 `#edgeTaskModal` 模态框。
+- 点击任务卡片弹出详情，展示：基本信息、推理性能（模型/延迟/FPS/阈值）、标注图、检测明细表（类别/置信度/边界框）、调度决策、系统指标 JSON、完整云端分析（Markdown 渲染）、Agent 追踪链。
+- 弹窗底部可导出报告或触发云端分析。
+- 按 Escape 或点击遮罩关闭。
+
+**断网重传队列**
+
+- `post_json()` / `post_event()` 增加指数退避重试（3 次：2s / 4s / 8s）。
+- 重试全部失败后，事件 JSON 保存到 `pending_events/event_<timestamp>.json`。
+- 新增 `--retry-pending` 命令批量重传，成功后自动删除对应文件。
+- `.gitignore` 已忽略 `pending_events/` 目录。
+- 心跳接口支持上报 `pending_events` 计数，前端设备卡片展示待重传数量。
+
+**RAG 边云知识库**
+
+- 新增 `knowledge/edge_cloud.md`，内容覆盖系统架构、Atlas 硬件、YOLO 推理、调度策略、API 接口、断网重传、部署方式、管理平台和课程对应关系。
+- `tool_rag.py` 自动扫描索引，Agent 分析边端任务时可检索该知识。
+
+**报告增强**
+
+- `_build_task_report()` 全面重写：新增基本信息表、推理性能、标注图内联链接、检测明细 Markdown 表格、调度决策详情、系统指标 JSON 块、Agent 追踪链（含工具调用和模型阶段）。
 
 ## 3. 当前运行方式
 
@@ -220,6 +260,15 @@ python3 /home/HwHiAiUser/atlas_upload_client.py \
 ```bash
 cd /home/HwHiAiUser/samples/notebooks/01-yolov5
 
+# 不依赖 --force-cloud（让调度算法自动决策）：
+python3 atlas_yolo_detect_and_upload.py \
+  --image world_cup.jpg \
+  --model yolo.om \
+  --labels coco_names.txt \
+  --server http://192.168.0.101:5000 \
+  --upload
+
+# 仍然可以强制上云：
 python3 atlas_yolo_detect_and_upload.py \
   --image world_cup.jpg \
   --model yolo.om \
@@ -229,27 +278,25 @@ python3 atlas_yolo_detect_and_upload.py \
   --force-cloud
 ```
 
-说明：现在脚本上传后默认触发云端 Agent 分析。如果只上传不分析，增加：
-
-```bash
---no-analyze
-```
+- 默认上传后自动触发云端 Agent 分析；加 `--no-analyze` 跳过。
+- 上传失败时自动重试 3 次，仍失败则保存到 `pending_events/`。
+- 重传：`python3 atlas_yolo_detect_and_upload.py --server http://192.168.0.101:5000 --retry-pending`
 
 ## 4. 当前与大作业要求的对应状态
 
 | 要求 | 当前状态 |
 | --- | --- |
-| 边端数据采集 | 已用静态图片上传/本地图像替代摄像头 |
+| 边端数据采集 | 已用静态图片上传替代摄像头 |
 | YOLO 边端检测 | 已在 Atlas 上真实运行 `yolo.om` |
-| 简单任务边端处理 | 已生成检测框、类别统计、FPS、内存/负载 |
+| 简单任务边端处理 | 已生成检测框、类别统计、FPS、内存/负载，含多因子调度决策 |
 | 复杂任务云端处理 | 已将检测事件交给云端 Agent 分析 |
 | 边云通信 | 已使用 HTTP/RESTful JSON 跑通 |
-| 管理平台 | 已展示设备状态、任务、标注图、调度流程、分析摘要 |
-| 智能体对话 | 旧 Agent 聊天能力保留 |
-| 本地知识库 RAG | 旧知识库能力保留 |
-| 联网搜索 | 旧 Agent 工具基础保留，边端分析未强制每次搜索 |
+| 管理平台 | 已展示设备状态、任务、标注图、调度流程、分析摘要、任务详情弹窗 |
+| 智能体对话 | LangChain Agent 聊天能力完整 |
+| 本地知识库 RAG | 含 FAISS 本地知识库 + 边云协同专项知识（`knowledge/edge_cloud.md`） |
+| 联网搜索 | Agent 工具基础保留，边端分析未强制每次搜索 |
 | Docker | 文件已写，未实机验证 |
-| 断网重连 | 未完整实现自动队列，目前可本地保存 JSON 后手动重传 |
+| 断网重连 | 已实现指数退避重试 + pending_events 本地队列 + --retry-pending 重传命令 |
 | Demo 文档 | 已有 `docs/demo.md` |
 | API 文档 | 已有 `docs/api.md` |
 | 系统设计文档 | 已有 `docs/design.md` |
@@ -263,23 +310,10 @@ python3 atlas_yolo_detect_and_upload.py \
    - 放入系统架构图；
    - 放入接口说明；
    - 放入 Atlas YOLO 推理截图；
-   - 放入管理平台截图；
+   - 放入管理平台截图（含新增的任务详情弹窗和调度因子）；
    - 放入 Demo 流程说明。
 
-2. **让边云调度更像“自动决策”**
-   - 目前 `--force-cloud` 常用于演示；
-   - 建议增加规则：
-     - `person_count >= 2` 自动上云；
-     - `vehicle_count > 0` 自动上云；
-     - `total_count == 0` 只本地保存；
-     - 低 FPS/高负载时提示边端资源紧张。
-
-3. **强化管理平台任务详情**
-   - 当前任务卡片只显示摘要；
-   - 可新增任务详情弹窗或详情页；
-   - 展示完整 detections、summary、trace、Agent answer。
-
-4. **Docker 验证**
+2. **Docker 验证**
    - 在装有 Docker 的机器上执行：
      ```powershell
      docker compose up --build
@@ -288,29 +322,21 @@ python3 atlas_yolo_detect_and_upload.py \
 
 ### 中优先级
 
-1. **断网重连**
-   - Atlas 上传失败时保存到本地 `pending_events/`；
-   - 新增重传命令；
-   - 管理平台展示最近重传状态。
+1. **摄像头实时流接入**
+   - Atlas 脚本目前读取静态图片；
+   - 可接入 USB 摄像头或 RTSP 流，改 `cv2.imread` 为 `cv2.VideoCapture`；
+   - 循环采集帧 → YOLO 推理 → 按间隔上传。
 
-2. **RAG 专项知识库**
-   - 增加 `knowledge/edge_cloud.md`；
-   - 写入边云协同、YOLO、Atlas、调度策略相关知识；
-   - 让 Agent 分析边端任务时优先检索该知识。
-
-3. **导出报告增强**
-   - 当前 `/report` 导出 Markdown；
-   - 可加入标注图链接；
-   - 可加入工具调用 trace；
-   - 可生成完整 HTML/PDF 报告。
+2. **导出报告 HTML/PDF**
+   - 当前 `/report` 导出 Markdown，已含标注图和 trace；
+   - 可进一步生成 HTML（Jinja2 模板）或 PDF（WeasyPrint）。
 
 ### 低优先级
 
-1. 摄像头实时流；
-2. MQTT 通信；
-3. 多设备管理；
-4. NPU 资源指标采集；
-5. 公网服务器部署。
+1. MQTT 通信替代 HTTP；
+2. 多设备管理（多台 Atlas 同时接入）；
+3. NPU 资源指标采集（昇腾芯片利用率、温度等）；
+4. 公网服务器部署。
 
 ## 6. 已知问题与注意事项
 
@@ -329,11 +355,16 @@ python3 atlas_yolo_detect_and_upload.py \
 
 5. **Atlas 负载值较高**
    - 当前截图里 loadavg 约 17；
-   - 可解释为开发板运行环境负载指标，不一定等同于 CPU 占用百分比。
+   - 可解释为开发板运行环境负载指标，不一定等同于 CPU 占用百分比；
+   - 调度算法中负载阈值设为 2.0（x86 标准），Atlas 上可能需要根据实际情况调高。
 
 6. **无摄像头**
    - 当前采用静态图片作为数据采集替代方案；
    - 报告中需要明确说明这是无摄像头条件下的合理替代。
+
+7. **边端脚本需重新上传**
+   - `edge/atlas_yolo_detect_and_upload.py` 和 `edge/atlas_upload_client.py` 本轮有较大改动（调度逻辑、重试队列）；
+   - 下次使用 Atlas 前需重新 scp 上传最新版本。
 
 ## 7. 下一位接手 AI 的建议路线
 
@@ -345,25 +376,94 @@ python3 atlas_yolo_detect_and_upload.py \
    ```
    ```bash
    cd /home/HwHiAiUser/samples/notebooks/01-yolov5
-   python3 atlas_yolo_detect_and_upload.py --image world_cup.jpg --model yolo.om --labels coco_names.txt --server http://192.168.0.101:5000 --upload --force-cloud
+   python3 atlas_yolo_detect_and_upload.py --image world_cup.jpg --model yolo.om --labels coco_names.txt --server http://192.168.0.101:5000 --upload
    ```
 
-2. 打开管理平台截图保存：
+2. 打开管理平台截图保存（用于课程报告）：
    ```text
    http://192.168.0.101:5000
    ```
+   截图要点：设备状态卡片、边端任务列表（含调度因子）、点击任务卡片弹出的详情弹窗、导出报告内容。
 
-3. 完善“自动调度规则”，减少对 `--force-cloud` 的依赖。
+3. 写课程设计报告和 PPT/海报。
 
-4. 写课程设计报告和 PPT/海报。
+4. 如有 Docker 环境，验证 Docker 部署。
 
-5. 如有 Docker 环境，验证 Docker 部署。
+5. 若时间允许，接入 USB 摄像头或生成 HTML 报告。
 
-6. 若时间允许，增加断网重传队列。
+## 8. 关键文件索引
 
-## 8. 最近提交记录
+边端（运行在 Atlas）：
 
 ```text
+edge/atlas_yolo_detect_and_upload.py    ← YOLO 检测 + 上传 + 调度 + 重试队列
+edge/atlas_upload_client.py             ← 通用上传 / 心跳 / 重传客户端
+edge/README.md
+```
+
+云端服务：
+
+```text
+app.py                                  ← 入口
+web.py                                  ← Flask 工厂
+server/__init__.py                      ← create_app() 蓝图注册
+server/edge_routes.py                   ← 边云通信接口（10+ 个端点）
+server/chat_routes.py                   ← Agent 对话 / SSE 流式
+server/core_routes.py                   ← 健康检查 / 状态 / 图片代理
+server/conversation_routes.py           ← 会话 CRUD
+server/amap_routes.py                   ← 高德地图前端辅助接口
+server/bootstrap.py                     ← 运行时配置
+server/context.py                       ← 用户位置上下文
+```
+
+智能体核心：
+
+```text
+src/travel_agent/agent.py               ← Agent 构建 / 调用 / 流式
+src/travel_agent/config.py              ← LLM 配置 (.env 加载)
+src/travel_agent/prompts.py             ← System Prompt（工具使用规则）
+src/travel_agent/tools.py               ← 工具注册
+src/travel_agent/skills.py              ← Skill 编排
+src/travel_agent/storage.py             ← SQLite 持久化（4 张表）
+src/travel_agent/trace.py               ← 执行追踪
+src/travel_agent/structured.py          ← JSON 解析 / 结构化提取
+src/travel_agent/tool_rag.py            ← FAISS RAG 知识库
+src/travel_agent/train_tools.py         ← 12306 MCP 火车票工具
+```
+
+前端：
+
+```text
+templates/index.html                    ← 单页应用 + 模态框
+static/app.js                           ← 前端逻辑（~2900 行）
+static/styles.css                       ← 样式表
+```
+
+数据与知识：
+
+```text
+data/travel_agent.db                    ← SQLite
+data/edge_artifacts/                    ← 标注图存储
+knowledge/edge_cloud.md                 ← 边云协同知识库（本轮新增）
+knowledge/agent_architecture.md
+knowledge/travel_tips.md
+knowledge/cities/*.md
+```
+
+部署：
+
+```text
+Dockerfile
+docker-compose.yml
+.dockerignore
+requirements.txt
+.env.example
+```
+
+## 9. 最近提交记录
+
+```text
+（本轮改动待提交）
 dd59cb3 Add heartbeat and task report export
 881d0e2 Add device status monitoring and delivery docs
 c5d2b58 Complete edge cloud analysis loop with artifacts

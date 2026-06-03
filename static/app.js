@@ -1438,7 +1438,22 @@ function renderEdgeTasks(tasks) {
       ? `<div class="edge-task-analysis">${escapeHtml(task.analysis.answer).slice(0, 140)}${task.analysis.answer.length > 140 ? "..." : ""}</div>`
       : "";
     const imageUrl = event.annotated_image_url || "";
-    const dispatchReason = event.edge_decision?.reason || "";
+    const decision = event.edge_decision || {};
+    const dispatchReason = decision.reason || "";
+    const needCloud = decision.need_cloud_analysis;
+    const factors = [];
+    const personCount = summary.person_count;
+    const vehicleCount = summary.vehicle_count;
+    if (personCount !== undefined && personCount > 0) factors.push(`人:${personCount}`);
+    if (vehicleCount !== undefined && vehicleCount > 0) factors.push(`车:${vehicleCount}`);
+    if (inference.conf_thres !== undefined) factors.push(`阈值:${inference.conf_thres}`);
+    if (summary.total_count !== undefined) factors.push(`共:${summary.total_count}`);
+    const factorsHtml = factors.length
+      ? `<div class="edge-decision-factors">${factors.map((f) => `<span>${escapeHtml(f)}</span>`).join("")}</div>`
+      : "";
+    const cloudChip = needCloud
+      ? '<span class="edge-cloud-chip on">上云</span>'
+      : '<span class="edge-cloud-chip off">本地</span>';
     return `
       <div class="edge-task-card" data-edge-task-id="${escapeHtml(task.id || "")}">
         ${imageUrl ? `<img class="edge-task-image" src="${escapeHtml(imageUrl)}" alt="Atlas YOLO annotated result" loading="lazy">` : ""}
@@ -1447,13 +1462,15 @@ function renderEdgeTasks(tasks) {
           <span>${escapeHtml(task.device_id || event.device_id || "unknown-device")}</span>
         </div>
         <div class="edge-task-meta">
+          ${cloudChip}
           <span>${escapeHtml(task.status || "received")}</span>
           <span>${escapeHtml(countText)}</span>
           <span>${escapeHtml(perfText)}</span>
           <span>${task.analysis ? "已分析" : "待分析"}</span>
         </div>
         <div class="edge-task-flow">
-          <div><b>边端</b>YOLO 本地推理，生成检测框和数量摘要</div>
+          <div><b>边端</b>YOLO 本地推理并生成检测摘要</div>
+          ${factorsHtml}
           <div><b>调度</b>${escapeHtml(dispatchReason || "检测结果上传云端")}</div>
           <div><b>云端</b>${task.analysis ? "Agent 已生成场景理解和建议" : "等待 Agent 分析"}</div>
         </div>
@@ -1467,6 +1484,13 @@ function renderEdgeTasks(tasks) {
   }).join("");
   edgeTasksListEl.querySelectorAll(".edge-analyze-btn").forEach((button) => {
     button.addEventListener("click", () => analyzeEdgeTask(button.dataset.taskId, button));
+  });
+  edgeTasksListEl.querySelectorAll(".edge-task-card[data-edge-task-id]").forEach((card) => {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("a, button")) return;
+      const taskId = card.dataset.edgeTaskId;
+      if (taskId) openEdgeTaskModal(taskId);
+    });
   });
 }
 
@@ -1502,6 +1526,10 @@ function renderEdgeDevices(devices) {
       : (device.latest_latency_ms ? `${device.latest_latency_ms} ms` : "no perf");
     const memoryText = memory.used_percent !== undefined ? `内存 ${memory.used_percent}%` : "内存未知";
     const loadText = loadavg["1m"] !== undefined ? `负载 ${loadavg["1m"]}` : "负载未知";
+    const pendingCount = device.pending_events || 0;
+    const pendingHtml = pendingCount > 0
+      ? `<span class="pending-chip">待重传 ${pendingCount}</span>`
+      : "";
     return `
       <div class="edge-device-card">
         <div class="edge-device-main">
@@ -1513,6 +1541,7 @@ function renderEdgeDevices(devices) {
           <span>${escapeHtml(perf)}</span>
           <span>${escapeHtml(memoryText)}</span>
           <span>${escapeHtml(loadText)}</span>
+          ${pendingHtml}
         </div>
         <div class="edge-device-sub">
           最近任务：${escapeHtml(device.latest_image_id || "无")} · ${escapeHtml(String(device.age_seconds ?? "未知"))} 秒前
@@ -1539,6 +1568,239 @@ async function analyzeEdgeTask(taskId, button) {
     button.disabled = false;
     button.textContent = oldText || "云端分析";
   }
+}
+
+// ---- Edge Task Detail Modal ----
+
+const edgeTaskModal = document.querySelector("#edgeTaskModal");
+const modalBody = document.querySelector("#modalBody");
+const modalCloseBtn = document.querySelector("#modalCloseBtn");
+const modalTaskTitle = document.querySelector("#modalTaskTitle");
+const modalReportLink = document.querySelector("#modalReportLink");
+const modalAnalyzeBtn = document.querySelector("#modalAnalyzeBtn");
+
+let modalCurrentTaskId = "";
+
+function openEdgeTaskModal(taskId) {
+  if (!edgeTaskModal || !modalBody) return;
+  modalCurrentTaskId = taskId;
+  modalBody.innerHTML = '<div class="modal-loading">加载任务详情...</div>';
+  edgeTaskModal.hidden = false;
+  document.body.style.overflow = "hidden";
+
+  fetch(`/api/edge/tasks/${encodeURIComponent(taskId)}`)
+    .then((response) => response.json())
+    .then((data) => {
+      if (!data.ok) throw new Error(data.error || "请求失败");
+      renderEdgeTaskDetail(data.task);
+    })
+    .catch((err) => {
+      modalBody.innerHTML = `<div class="modal-error">加载失败: ${escapeHtml(err.message)}</div>`;
+    });
+}
+
+function closeEdgeTaskModal() {
+  if (edgeTaskModal) edgeTaskModal.hidden = true;
+  document.body.style.overflow = "";
+  modalCurrentTaskId = "";
+}
+
+function renderEdgeTaskDetail(task) {
+  if (!modalTaskTitle || !modalBody) return;
+  const event = task.event || {};
+  const inference = event.inference || {};
+  const summary = event.summary || {};
+  const systemMetrics = event.system_metrics || {};
+  const analysis = task.analysis || {};
+  const detections = event.detections || [];
+  const edgeDecision = event.edge_decision || {};
+
+  modalTaskTitle.textContent = `任务: ${task.image_id || event.image_id || "未命名"}`;
+  if (modalReportLink) modalReportLink.href = `/api/edge/tasks/${encodeURIComponent(task.id || "")}/report`;
+  if (modalAnalyzeBtn) {
+    modalAnalyzeBtn.hidden = !!analysis.answer;
+    modalAnalyzeBtn.disabled = false;
+    modalAnalyzeBtn.textContent = "触发云端分析";
+  }
+
+  let html = "";
+
+  // 1. Basic info
+  html += `
+    <section class="modal-section">
+      <h4 class="modal-section-title">基本信息</h4>
+      <div class="modal-info-grid">
+        <div><span>任务 ID</span><code>${escapeHtml(task.id || "")}</code></div>
+        <div><span>设备</span>${escapeHtml(task.device_id || event.device_id || "")}</div>
+        <div><span>主机名</span>${escapeHtml(event.hostname || "")}</div>
+        <div><span>图片</span>${escapeHtml(task.image_id || event.image_id || "")}</div>
+        <div><span>来源</span>${escapeHtml(task.source_type || event.source_type || "")}</div>
+        <div><span>状态</span><strong>${escapeHtml(task.status || "")}</strong></div>
+        <div><span>创建时间</span>${escapeHtml(task.created_at || "")}</div>
+        <div><span>更新时间</span>${escapeHtml(task.updated_at || "")}</div>
+      </div>
+    </section>
+  `;
+
+  // 2. Inference metrics
+  html += `
+    <section class="modal-section">
+      <h4 class="modal-section-title">推理性能</h4>
+      <div class="modal-metrics-grid">
+        <div class="modal-metric"><div>模型</div><strong>${escapeHtml(inference.model || "N/A")}</strong></div>
+        <div class="modal-metric"><div>延迟</div><strong>${inference.latency_ms != null ? `${inference.latency_ms} ms` : "N/A"}</strong></div>
+        <div class="modal-metric"><div>FPS</div><strong>${inference.fps != null ? inference.fps : "N/A"}</strong></div>
+        <div class="modal-metric"><div>置信阈值</div><strong>${inference.conf_thres != null ? inference.conf_thres : "N/A"}</strong></div>
+        <div class="modal-metric"><div>IoU 阈值</div><strong>${inference.iou_thres != null ? inference.iou_thres : "N/A"}</strong></div>
+      </div>
+    </section>
+  `;
+
+  // 3. Annotated image
+  const annotatedUrl = event.annotated_image_url || "";
+  if (annotatedUrl) {
+    html += `
+      <section class="modal-section">
+        <h4 class="modal-section-title">标注图像</h4>
+        <img class="modal-annotated-image" src="${escapeHtml(annotatedUrl)}" alt="YOLO annotated result" loading="lazy">
+      </section>
+    `;
+  }
+
+  // 4. Detection table
+  if (detections.length) {
+    html += `
+      <section class="modal-section">
+        <h4 class="modal-section-title">检测明细 (${detections.length} 个目标)</h4>
+        <div class="modal-table-wrap">
+          <table class="modal-detection-table">
+            <thead><tr><th>#</th><th>类别</th><th>类别 ID</th><th>置信度</th><th>边界框</th></tr></thead>
+            <tbody>
+              ${detections.map((d, i) => `
+                <tr>
+                  <td>${i + 1}</td>
+                  <td><strong>${escapeHtml(String(d.class_name || d.class_id || ""))}</strong></td>
+                  <td>${d.class_id != null ? d.class_id : ""}</td>
+                  <td>${typeof d.confidence === "number" ? (d.confidence * 100).toFixed(1) + "%" : "N/A"}</td>
+                  <td>${d.bbox ? escapeHtml(d.bbox.map((v) => v.toFixed(1)).join(", ")) : "N/A"}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `;
+  }
+
+  // 5. Summary
+  const countEntries = Object.entries(summary.class_counts || {});
+  const countText = countEntries.length
+    ? countEntries.map(([k, v]) => `${k}:${v}`).join(", ")
+    : `total:${summary.total_count || 0}`;
+  html += `
+    <section class="modal-section">
+      <h4 class="modal-section-title">检测摘要</h4>
+      <div class="modal-metrics-grid">
+        <div class="modal-metric"><div>总目标数</div><strong>${summary.total_count || 0}</strong></div>
+        <div class="modal-metric"><div>人数</div><strong>${summary.person_count || 0}</strong></div>
+        <div class="modal-metric"><div>车辆数</div><strong>${summary.vehicle_count || 0}</strong></div>
+      </div>
+      <div style="font-size:13px;margin-top:8px;color:var(--muted)">${escapeHtml(countText)}</div>
+    </section>
+  `;
+
+  // 6. Scheduling decision
+  html += `
+    <section class="modal-section">
+      <h4 class="modal-section-title">调度决策</h4>
+      <div class="modal-decision">${escapeHtml(edgeDecision.reason || "无决策原因")}</div>
+      <div class="modal-info-grid">
+        <div><span>本地处理</span>${edgeDecision.handled_locally ? "是" : "否"}</div>
+        <div><span>云端分析</span><strong>${edgeDecision.need_cloud_analysis ? "需要" : "不需要"}</strong></div>
+      </div>
+    </section>
+  `;
+
+  // 7. System metrics
+  if (Object.keys(systemMetrics).length) {
+    html += `
+      <section class="modal-section">
+        <h4 class="modal-section-title">系统指标</h4>
+        <pre class="modal-metrics-json">${escapeHtml(JSON.stringify(systemMetrics, null, 2))}</pre>
+      </section>
+    `;
+  }
+
+  // 8. Agent analysis
+  if (analysis.answer) {
+    html += `
+      <section class="modal-section">
+        <h4 class="modal-section-title">云端 Agent 分析</h4>
+        <div class="modal-analysis-full">${renderMarkdown(analysis.answer)}</div>
+      </section>
+    `;
+  } else {
+    html += `
+      <section class="modal-section">
+        <h4 class="modal-section-title">云端 Agent 分析</h4>
+        <p style="color:var(--muted);font-size:13px">尚未生成云端分析。可点击下方按钮触发分析。</p>
+      </section>
+    `;
+  }
+
+  // 9. Agent trace
+  const traceData = analysis.trace;
+  if (Array.isArray(traceData) && traceData.length) {
+    html += `
+      <section class="modal-section">
+        <h4 class="modal-section-title">Agent 执行追踪</h4>
+    `;
+    modalBody.innerHTML = html;
+    const section = modalBody.lastElementChild;
+    section.appendChild(renderTrace(traceData, true));
+    return;
+  }
+
+  modalBody.innerHTML = html;
+}
+
+// Bind modal events
+if (modalCloseBtn) {
+  modalCloseBtn.addEventListener("click", closeEdgeTaskModal);
+}
+if (edgeTaskModal) {
+  edgeTaskModal.addEventListener("click", (e) => {
+    if (e.target === edgeTaskModal) closeEdgeTaskModal();
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && edgeTaskModal && !edgeTaskModal.hidden) {
+    closeEdgeTaskModal();
+  }
+});
+if (modalAnalyzeBtn) {
+  modalAnalyzeBtn.addEventListener("click", async () => {
+    if (!modalCurrentTaskId) return;
+    const btn = modalAnalyzeBtn;
+    btn.disabled = true;
+    btn.textContent = "分析中...";
+    try {
+      const response = await fetch("/api/edge/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: modalCurrentTaskId, thinking_mode: true }),
+      });
+      if (!response.ok) throw new Error("analysis failed");
+      const data = await response.json();
+      if (data.ok) {
+        renderEdgeTaskDetail(data.task);
+        loadEdgeTasks();
+      }
+    } catch {
+      btn.disabled = false;
+      btn.textContent = "触发云端分析";
+    }
+  });
 }
 
 async function detectIpLocation() {

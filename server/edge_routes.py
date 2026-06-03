@@ -66,6 +66,7 @@ def edge_heartbeat():
         "source": "heartbeat",
         "system_metrics": payload.get("system_metrics") if isinstance(payload.get("system_metrics"), dict) else {},
         "note": payload.get("note") or "",
+        "pending_events": payload.get("pending_events", 0) if isinstance(payload.get("pending_events"), int) else 0,
     }
     device = upsert_edge_device(device_id, hostname, status)
     return jsonify({"ok": True, "device": device})
@@ -101,6 +102,7 @@ def edge_status():
             "latest_fps": None,
             "latest_latency_ms": None,
             "system_metrics": status.get("system_metrics") if isinstance(status.get("system_metrics"), dict) else {},
+            "pending_events": status.get("pending_events", 0),
         }
     for task in tasks:
         event = task.get("event") or {}
@@ -122,6 +124,7 @@ def edge_status():
             "latest_fps": inference.get("fps"),
             "latest_latency_ms": inference.get("latency_ms"),
             "system_metrics": event.get("system_metrics") if isinstance(event.get("system_metrics"), dict) else {},
+            "pending_events": (devices.get(device_id, {}) if device_id in devices else {}).get("pending_events", 0),
         }
     return jsonify({"ok": True, "devices": list(devices.values()), "task_count": len(tasks)})
 
@@ -252,6 +255,87 @@ def _summarize_detections(detections: Any) -> dict[str, Any]:
     return {"total_count": sum(counts.values()), "class_counts": counts}
 
 
+def _compute_scheduling(
+    summary: dict[str, Any],
+    detections: list[dict[str, Any]],
+    system_metrics: dict[str, Any],
+    force_cloud: bool = False,
+) -> dict[str, Any]:
+    """Server-side scheduling decision matching edge-side logic."""
+    if force_cloud:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": "用户指定强制云端分析（--force-cloud）。",
+        }
+    total = summary.get("total_count", 0)
+    if total == 0:
+        return {
+            "handled_locally": True,
+            "need_cloud_analysis": False,
+            "reason": "YOLO 未检测到任何目标，本地完成无需上云。",
+        }
+    persons = summary.get("person_count", 0)
+    vehicles = summary.get("vehicle_count", 0)
+    if persons > 0:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"检测到 {persons} 人，触发云端场景理解与风险评估。",
+        }
+    if vehicles >= 1:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"检测到 {vehicles} 辆车，触发云端交通场景分析。",
+        }
+    confidences = [
+        d.get("confidence", 0)
+        for d in detections
+        if isinstance(d.get("confidence"), (int, float))
+    ]
+    avg_conf = sum(confidences) / len(confidences) if confidences else 0
+    if avg_conf < 0.7 and confidences:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"平均置信度 {avg_conf:.2f} 偏低，需云端复核检测结果。",
+        }
+    loadavg = system_metrics.get("loadavg", {}) if isinstance(system_metrics, dict) else {}
+    if isinstance(loadavg, str):
+        try:
+            load_1m_val = float(loadavg.split()[0])
+        except (ValueError, IndexError):
+            load_1m_val = 0
+    elif isinstance(loadavg, dict):
+        load_1m_val = float(loadavg.get("1m", 0) or 0)
+    else:
+        load_1m_val = 0
+    if load_1m_val > 2.0:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"边端负载较高（loadavg 1m={load_1m_val:.1f}），卸载至云端处理。",
+        }
+    return {
+        "handled_locally": True,
+        "need_cloud_analysis": False,
+        "reason": f"检测到 {total} 个目标（人:{persons} 车:{vehicles}），置信度充足，本地处理即可。",
+    }
+
+
+@edge_bp.post("/api/edge/scheduling/validate")
+def validate_scheduling():
+    """Server-side validation of an edge scheduling decision."""
+    body = request.get_json(silent=True) or {}
+    summary = body.get("summary") if isinstance(body.get("summary"), dict) else {}
+    detections = body.get("detections") if isinstance(body.get("detections"), list) else []
+    system_metrics = body.get("system_metrics") if isinstance(body.get("system_metrics"), dict) else {}
+    force_cloud = bool(body.get("force_cloud", False))
+    decision = _compute_scheduling(summary, detections, system_metrics, force_cloud=force_cloud)
+    return jsonify({"ok": True, "decision": decision})
+
+
 def _build_edge_analysis_prompt(task: dict[str, Any]) -> str:
     event = task.get("event") or {}
     compact_event = json.dumps(event, ensure_ascii=False, indent=2)
@@ -276,33 +360,126 @@ def _build_task_report(task: dict[str, Any]) -> str:
     summary = event.get("summary") if isinstance(event.get("summary"), dict) else {}
     counts = summary.get("class_counts") if isinstance(summary.get("class_counts"), dict) else {}
     detections = event.get("detections") if isinstance(event.get("detections"), list) else []
+    system_metrics = event.get("system_metrics") if isinstance(event.get("system_metrics"), dict) else {}
+    edge_decision = event.get("edge_decision") if isinstance(event.get("edge_decision"), dict) else {}
     analysis = task.get("analysis") if isinstance(task.get("analysis"), dict) else {}
+    annotated_url = event.get("annotated_image_url", "")
+
     lines = [
-        f"# Atlas 边云协同任务报告",
+        "# Atlas 边云协同任务报告",
+        "",
+        "## 基本信息",
         "",
         f"- 任务 ID: `{task.get('id')}`",
         f"- 设备 ID: `{task.get('device_id')}`",
+        f"- 主机名: `{event.get('hostname', '')}`",
         f"- 图片: `{task.get('image_id')}`",
+        f"- 来源类型: `{task.get('source_type', '')}`",
         f"- 状态: `{task.get('status')}`",
+        f"- 创建时间: `{task.get('created_at')}`",
+        f"- 更新时间: `{task.get('updated_at')}`",
+        "",
+        "## 推理性能",
+        "",
         f"- 模型: `{inference.get('model', '')}`",
         f"- 推理延迟: `{inference.get('latency_ms', '')}` ms",
         f"- FPS: `{inference.get('fps', '')}`",
+        f"- 置信度阈值: `{inference.get('conf_thres', '')}`",
+        f"- IoU 阈值: `{inference.get('iou_thres', '')}`",
         "",
         "## 边端检测摘要",
         "",
         f"- 总目标数: `{summary.get('total_count', 0)}`",
+        f"- 人数: `{summary.get('person_count', 0)}`",
+        f"- 车辆数: `{summary.get('vehicle_count', 0)}`",
         f"- 类别统计: `{json.dumps(counts, ensure_ascii=False)}`",
         "",
-        "## 检测明细",
+        "## 标注图像",
         "",
     ]
-    if detections:
-        for index, item in enumerate(detections, 1):
-            lines.append(
-                f"{index}. `{item.get('class_name')}` confidence=`{item.get('confidence')}` bbox=`{item.get('bbox')}`"
-            )
+    if annotated_url:
+        lines.append(f"![标注图]({annotated_url})")
+        lines.append("")
     else:
-        lines.append("- 无检测目标")
-    lines.extend(["", "## 云端 Agent 分析", ""])
-    lines.append(str(analysis.get("answer") or "尚未生成云端分析。"))
+        lines.append("(未上传标注图)")
+        lines.append("")
+
+    lines.extend([
+        "## 检测明细",
+        "",
+    ])
+    if detections:
+        lines.append("| # | 类别 | 类别ID | 置信度 | 边界框 (x1, y1, x2, y2) |")
+        lines.append("|---|---|---|---|---|")
+        for index, item in enumerate(detections, 1):
+            class_name = item.get("class_name", "")
+            class_id = item.get("class_id", "")
+            conf_val = item.get("confidence")
+            conf_str = f"{conf_val:.4f}" if isinstance(conf_val, (int, float)) else "N/A"
+            bbox = item.get("bbox", [])
+            bbox_str = ", ".join(f"{v:.1f}" for v in bbox) if bbox else "N/A"
+            lines.append(f"| {index} | `{class_name}` | {class_id} | {conf_str} | {bbox_str} |")
+    else:
+        lines.append("无检测目标")
+    lines.append("")
+
+    lines.extend([
+        "## 调度决策",
+        "",
+        f"- 本地处理: `{edge_decision.get('handled_locally', True)}`",
+        f"- 需要云端分析: `{edge_decision.get('need_cloud_analysis', False)}`",
+        f"- 决策原因: {edge_decision.get('reason', 'N/A')}",
+        "",
+    ])
+
+    if system_metrics:
+        lines.extend([
+            "## 边端系统指标",
+            "",
+            "```json",
+            json.dumps(system_metrics, ensure_ascii=False, indent=2),
+            "```",
+            "",
+        ])
+
+    lines.extend([
+        "## 云端 Agent 分析",
+        "",
+        str(analysis.get("answer") or "尚未生成云端分析。"),
+        "",
+    ])
+
+    trace = analysis.get("trace") if isinstance(analysis.get("trace"), list) else []
+    if trace:
+        lines.extend([
+            "## Agent 执行追踪",
+            "",
+        ])
+        for item in trace:
+            item_type = item.get("type", "")
+            tool = item.get("tool", "")
+            status = item.get("status", "")
+            duration = item.get("duration_ms")
+            duration_str = f" | 耗时: {duration}ms" if isinstance(duration, (int, float)) else ""
+            if item_type == "tool_call":
+                args = item.get("args", {})
+                args_str = " ".join(
+                    f"{k}={v}" for k, v in args.items()
+                    if isinstance(v, (str, int, float))
+                )[:160]
+                lines.append(f"- 🔧 调用 `{tool}` | 状态: {status}{duration_str}")
+                if args_str:
+                    lines.append(f"  参数: {args_str}")
+            elif item_type == "llm_response":
+                model = item.get("model", "unknown")
+                usage = item.get("usage", {})
+                usage_str = ""
+                if isinstance(usage, dict):
+                    parts = []
+                    if usage.get("total_tokens"):
+                        parts.append(f"tokens: {usage['total_tokens']}")
+                    usage_str = f" | {', '.join(parts)}" if parts else ""
+                lines.append(f"- 🤖 模型生成 | 模型: {model} | 状态: {status}{duration_str}{usage_str}")
+        lines.append("")
+
     return "\n".join(lines) + "\n"

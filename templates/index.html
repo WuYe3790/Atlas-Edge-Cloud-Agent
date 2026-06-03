@@ -175,6 +175,20 @@
     </section>
   </main>
 
+  <div id="edgeTaskModal" class="modal-overlay" hidden>
+    <div class="modal-dialog">
+      <header class="modal-header">
+        <h3 id="modalTaskTitle">任务详情</h3>
+        <button id="modalCloseBtn" type="button" class="modal-close-btn">&times;</button>
+      </header>
+      <div id="modalBody" class="modal-body"></div>
+      <footer class="modal-footer">
+        <a id="modalReportLink" class="modal-report-link" href="#" target="_blank" rel="noreferrer">导出完整报告</a>
+        <button id="modalAnalyzeBtn" type="button" class="modal-analyze-btn" hidden>触发云端分析</button>
+      </footer>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="{{ url_for('static', filename='app.js') }}?v=20260603-edge3"></script>
 </body>

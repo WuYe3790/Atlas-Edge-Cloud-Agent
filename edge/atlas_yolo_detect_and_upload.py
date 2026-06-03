@@ -69,6 +69,88 @@ def summarize(detections: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def compute_scheduling_decision(
+    summary: dict[str, Any],
+    detections: list[dict[str, Any]],
+    system_metrics: dict[str, Any],
+    force_cloud: bool = False,
+) -> dict[str, Any]:
+    """Multi-factor scheduling decision for edge-cloud task dispatch.
+
+    Rules (evaluated in order):
+    1. --force-cloud → always cloud
+    2. total_count == 0 → local only
+    3. person detected → cloud scene understanding
+    4. vehicle detected → cloud traffic analysis
+    5. avg confidence too low → cloud review
+    6. edge system load too high → offload to cloud
+    7. default → local only (few targets, good confidence)
+    """
+    if force_cloud:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": "用户指定强制云端分析（--force-cloud）。",
+        }
+
+    total = summary.get("total_count", 0)
+    if total == 0:
+        return {
+            "handled_locally": True,
+            "need_cloud_analysis": False,
+            "reason": "YOLO 未检测到任何目标，本地完成无需上云。",
+        }
+
+    persons = summary.get("person_count", 0)
+    vehicles = summary.get("vehicle_count", 0)
+
+    if persons > 0:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"检测到 {persons} 人，触发云端场景理解与风险评估。",
+        }
+
+    if vehicles >= 1:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"检测到 {vehicles} 辆车，触发云端交通场景分析。",
+        }
+
+    confidences = [
+        d.get("confidence", 0)
+        for d in detections
+        if isinstance(d.get("confidence"), (int, float))
+    ]
+    avg_conf = sum(confidences) / len(confidences) if confidences else 0
+    if avg_conf < 0.7 and confidences:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"平均置信度 {avg_conf:.2f} 偏低，需云端复核检测结果。",
+        }
+
+    loadavg = system_metrics.get("loadavg", {}) if isinstance(system_metrics, dict) else {}
+    load_1m = loadavg.get("1m", 0) if isinstance(loadavg, dict) else 0
+    try:
+        load_1m = float(load_1m)
+    except (TypeError, ValueError):
+        load_1m = 0
+    if load_1m > 2.0:
+        return {
+            "handled_locally": False,
+            "need_cloud_analysis": True,
+            "reason": f"边端负载较高（loadavg 1m={load_1m:.1f}），卸载至云端处理。",
+        }
+
+    return {
+        "handled_locally": True,
+        "need_cloud_analysis": False,
+        "reason": f"检测到 {total} 个目标（人:{persons} 车:{vehicles}），置信度充足，本地处理即可。",
+    }
+
+
 def collect_system_metrics() -> dict[str, Any]:
     metrics: dict[str, Any] = {}
     try:
@@ -144,7 +226,13 @@ def build_event(
     annotated_image_path: Path | None = None,
 ) -> dict[str, Any]:
     fps = 1000.0 / latency_ms if latency_ms > 0 else None
-    need_cloud = args.force_cloud or summary["total_count"] > 0
+    system_metrics = collect_system_metrics()
+    edge_decision = compute_scheduling_decision(
+        summary, detections, system_metrics,
+        force_cloud=args.force_cloud,
+    )
+    if args.reason:
+        edge_decision["reason"] = args.reason
     event = {
         "device_id": args.device_id,
         "hostname": socket.gethostname(),
@@ -161,12 +249,8 @@ def build_event(
         },
         "detections": detections,
         "summary": summary,
-        "system_metrics": collect_system_metrics(),
-        "edge_decision": {
-            "handled_locally": True,
-            "need_cloud_analysis": need_cloud,
-            "reason": args.reason or ("YOLO detected targets; cloud semantic analysis requested." if need_cloud else "No target detected."),
-        },
+        "system_metrics": system_metrics,
+        "edge_decision": edge_decision,
     }
     if annotated_image_path and annotated_image_path.exists() and not args.no_image_payload:
         event["annotated_image"] = {
@@ -177,10 +261,65 @@ def build_event(
     return event
 
 
-def post_json(url: str, payload: dict[str, Any], timeout: int) -> dict[str, Any]:
-    response = requests.post(url, json=payload, timeout=timeout)
-    response.raise_for_status()
-    return response.json()
+PENDING_DIR = Path("pending_events")
+
+
+def post_json(url: str, payload: dict[str, Any], timeout: int, max_retries: int = 3) -> dict[str, Any]:
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(url, json=payload, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < max_retries:
+                delay = 2 ** attempt
+                print(f"[retry] POST failed (attempt {attempt}/{max_retries}), retrying in {delay}s: {exc}", file=sys.stderr)
+                time.sleep(delay)
+    raise last_error  # type: ignore[misc]
+
+
+def save_pending_event(event: dict[str, Any]) -> Path:
+    PENDING_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"event_{timestamp}.json"
+    path = PENDING_DIR / filename
+    path.write_text(json.dumps(event, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[pending] event saved to {path}", file=sys.stderr)
+    return path
+
+
+def load_pending_events() -> list[tuple[Path, dict[str, Any]]]:
+    if not PENDING_DIR.exists():
+        return []
+    events: list[tuple[Path, dict[str, Any]]] = []
+    for path in sorted(PENDING_DIR.iterdir()):
+        if path.suffix == ".json":
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                events.append((path, data))
+            except (json.JSONDecodeError, OSError):
+                print(f"[pending] skipping unreadable file: {path}", file=sys.stderr)
+    return events
+
+
+def retry_pending_events(server_url: str, timeout: int) -> int:
+    pending = load_pending_events()
+    if not pending:
+        print("没有待重试的事件。")
+        return 0
+    success = 0
+    for path, event in pending:
+        try:
+            result = post_json(server_url + "/api/edge/events", event, timeout)
+            path.unlink()
+            print(f"[pending] retry success: {path.name} -> task_id={result.get('task_id', '')}")
+            success += 1
+        except requests.RequestException as exc:
+            print(f"[pending] retry failed: {path.name}: {exc}", file=sys.stderr)
+    print(f"[pending] retry complete: {success}/{len(pending)} succeeded")
+    return 0 if success == len(pending) else 1
 
 
 def parse_args() -> argparse.Namespace:
@@ -202,11 +341,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-cloud", action="store_true")
     parser.add_argument("--reason", default="")
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--retry-pending", action="store_true", help="Retry all pending events from pending_events/ directory")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+
+    # --retry-pending: flush saved events without running YOLO
+    if args.retry_pending:
+        if not args.server:
+            raise ValueError("--server is required when --retry-pending is set")
+        return retry_pending_events(args.server.rstrip("/"), args.timeout)
+
     cfg = {
         **DEFAULT_CFG,
         "conf_thres": args.conf_thres,
@@ -232,16 +379,22 @@ def main() -> int:
     if args.upload:
         if not args.server:
             raise ValueError("--server is required when --upload is set")
-        result = post_json(args.server.rstrip("/") + "/api/edge/events", event, args.timeout)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        should_analyze = not args.no_analyze
-        if should_analyze and result.get("task_id"):
-            analysis = post_json(
-                args.server.rstrip("/") + "/api/edge/analyze",
-                {"task_id": result["task_id"]},
-                max(args.timeout, 120),
-            )
-            print(json.dumps(analysis, ensure_ascii=False, indent=2))
+        server_url = args.server.rstrip("/")
+        try:
+            result = post_json(server_url + "/api/edge/events", event, args.timeout)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            should_analyze = not args.no_analyze
+            if should_analyze and result.get("task_id"):
+                analysis = post_json(
+                    server_url + "/api/edge/analyze",
+                    {"task_id": result["task_id"]},
+                    max(args.timeout, 120),
+                )
+                print(json.dumps(analysis, ensure_ascii=False, indent=2))
+        except requests.RequestException as exc:
+            saved = save_pending_event(event)
+            print(f"上传失败，事件已保存到 {saved}。稍后使用 --retry-pending 重传。错误: {exc}", file=sys.stderr)
+            return 1
     return 0
 
 
