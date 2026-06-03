@@ -3053,6 +3053,10 @@ textarea {
   overflow: hidden;
 }
 
+.dashboard-column.device-column {
+  align-self: start;
+}
+
 .dashboard-column-title {
   display: flex;
   align-items: center;
@@ -3078,6 +3082,11 @@ textarea {
   display: grid;
   gap: 16px;
   align-content: start;
+}
+
+.edge-devices-dashboard-grid {
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .edge-tasks-dashboard-grid {

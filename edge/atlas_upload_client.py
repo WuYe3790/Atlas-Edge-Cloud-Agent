@@ -41,13 +41,32 @@ def summarize_detections(detections: list[dict[str, Any]]) -> dict[str, Any]:
 
 def collect_system_metrics() -> dict[str, Any]:
     metrics: dict[str, Any] = {}
-    for path, key in (("/proc/loadavg", "loadavg"), ("/proc/uptime", "uptime")):
-        try:
-            raw = Path(path).read_text().strip()
-        except Exception:
-            raw = ""
-        if raw:
-            metrics[key] = raw
+    try:
+        load1, load5, load15 = (float(value) for value in Path("/proc/loadavg").read_text().split()[:3])
+        metrics["loadavg"] = {"1m": load1, "5m": load5, "15m": load15}
+    except Exception:
+        pass
+    try:
+        meminfo: dict[str, int] = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, value = line.split(":", 1)
+            meminfo[key] = int(value.strip().split()[0])
+        total = meminfo.get("MemTotal")
+        available = meminfo.get("MemAvailable")
+        if total and available is not None:
+            used = total - available
+            metrics["memory"] = {
+                "total_mb": round(total / 1024, 1),
+                "available_mb": round(available / 1024, 1),
+                "used_percent": round(used / total * 100, 1),
+            }
+    except Exception:
+        pass
+    try:
+        uptime_seconds = float(Path("/proc/uptime").read_text().split()[0])
+        metrics["uptime_seconds"] = round(uptime_seconds, 1)
+    except Exception:
+        pass
     try:
         res = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=2.0)
         if res.returncode == 0:
@@ -84,6 +103,16 @@ def collect_system_metrics() -> dict[str, Any]:
                         "power_w": float(match_simple.group(5)),
                         "utilization_percent": int(match_simple.group(6)),
                     }
+                elif stdout.strip():
+                    metrics["npu"] = {
+                        "raw_available": True,
+                        "raw_preview": "\n".join(stdout.strip().splitlines()[:8]),
+                    }
+        elif res.stderr.strip():
+            metrics["npu"] = {
+                "raw_available": False,
+                "error": res.stderr.strip().splitlines()[0],
+            }
     except Exception:
         pass
     return metrics
@@ -356,7 +385,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--health", action="store_true", help="Only check /api/health")
     parser.add_argument("--heartbeat", action="store_true", help="Send device heartbeat to /api/edge/heartbeat")
     parser.add_argument("--watch", action="store_true", help="Keep sending heartbeat until interrupted. Use with --heartbeat.")
-    parser.add_argument("--interval", type=int, default=60, help="Heartbeat watch interval in seconds")
+    parser.add_argument("--interval", type=int, default=10, help="Heartbeat watch interval in seconds")
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--save-event", help="Save outgoing event JSON for debugging")
     parser.add_argument("--retry-pending", action="store_true", help="Retry all pending events from pending_events/ directory")

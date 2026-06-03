@@ -32,7 +32,7 @@ python3 atlas_upload_client.py \
   --server http://192.168.0.101:5000 \
   --heartbeat \
   --watch \
-  --interval 30
+  --interval 10
 ```
 
 Run it in the background:
@@ -43,7 +43,7 @@ nohup python3 atlas_upload_client.py \
   --server http://192.168.0.101:5000 \
   --heartbeat \
   --watch \
-  --interval 30 \
+  --interval 10 \
   > atlas_heartbeat.log 2>&1 &
 ```
 
