@@ -1427,12 +1427,17 @@ function renderEdgeTasks(tasks) {
   edgeTasksListEl.innerHTML = tasks.map((task) => {
     const event = task.event || {};
     const summary = event.summary || {};
+    const inference = event.inference || {};
     const counts = summary.class_counts || {};
     const countText = Object.keys(counts).length
       ? Object.entries(counts).map(([name, count]) => `${name}:${count}`).join(" / ")
       : `total:${summary.total_count || 0}`;
+    const perfText = inference.fps ? `${inference.fps} FPS` : (inference.latency_ms ? `${inference.latency_ms} ms` : "no perf");
+    const analysisText = task.analysis?.answer
+      ? `<div class="edge-task-analysis">${escapeHtml(task.analysis.answer).slice(0, 140)}${task.analysis.answer.length > 140 ? "..." : ""}</div>`
+      : "";
     return `
-      <div class="edge-task-card">
+      <div class="edge-task-card" data-edge-task-id="${escapeHtml(task.id || "")}">
         <div class="edge-task-main">
           <strong>${escapeHtml(task.image_id || event.image_id || "未命名图片")}</strong>
           <span>${escapeHtml(task.device_id || event.device_id || "unknown-device")}</span>
@@ -1440,11 +1445,19 @@ function renderEdgeTasks(tasks) {
         <div class="edge-task-meta">
           <span>${escapeHtml(task.status || "received")}</span>
           <span>${escapeHtml(countText)}</span>
+          <span>${escapeHtml(perfText)}</span>
           <span>${task.analysis ? "已分析" : "待分析"}</span>
+        </div>
+        ${analysisText}
+        <div class="edge-task-actions">
+          <button type="button" class="edge-analyze-btn" data-task-id="${escapeHtml(task.id || "")}" ${task.analysis ? "disabled" : ""}>云端分析</button>
         </div>
       </div>
     `;
   }).join("");
+  edgeTasksListEl.querySelectorAll(".edge-analyze-btn").forEach((button) => {
+    button.addEventListener("click", () => analyzeEdgeTask(button.dataset.taskId, button));
+  });
 }
 
 async function loadEdgeTasks() {
@@ -1455,6 +1468,25 @@ async function loadEdgeTasks() {
     renderEdgeTasks(data.tasks || []);
   } catch {
     edgeTasksListEl.innerHTML = '<div class="edge-empty">边端任务读取失败</div>';
+  }
+}
+
+async function analyzeEdgeTask(taskId, button) {
+  if (!taskId || !button) return;
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "分析中...";
+  try {
+    const response = await fetch("/api/edge/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId, thinking_mode: true }),
+    });
+    if (!response.ok) throw new Error("analysis failed");
+    await loadEdgeTasks();
+  } catch {
+    button.disabled = false;
+    button.textContent = oldText || "云端分析";
   }
 }
 

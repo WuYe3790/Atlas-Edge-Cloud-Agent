@@ -2368,3 +2368,34 @@ textarea {
   font-size: 11px;
   font-weight: 700;
 }
+
+.edge-task-analysis {
+  padding: 8px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.edge-task-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.edge-task-actions button {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.28);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.edge-task-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

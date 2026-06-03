@@ -1,8 +1,9 @@
 # Atlas Edge Client
 
-This directory contains the lightweight client used on Atlas 200I DK A2.
+This directory contains the lightweight clients used on Atlas 200I DK A2.
 
-The current client does not assume a fixed YOLO implementation. After the board-side `01-yolov5` sample is confirmed, export its detections as JSON and upload them with `atlas_upload_client.py`.
+- `atlas_upload_client.py`: uploads an existing detection JSON.
+- `atlas_yolo_detect_and_upload.py`: runs the board-side YOLO OM model, writes JSON/images, and uploads the result.
 
 ## 1. Check Laptop Cloud Service
 
@@ -61,18 +62,42 @@ python3 atlas_upload_client.py \
   --analyze
 ```
 
-## 4. Later YOLO Integration Point
+## 4. Run Real Atlas YOLO Detection
 
-After opening the board sample:
+Copy `atlas_yolo_detect_and_upload.py` to the YOLO sample directory:
+
+```powershell
+scp "C:\Users\BaoXinJie\Desktop\In NBU\计算机系统实习\atlas work\edge\atlas_yolo_detect_and_upload.py" root@192.168.0.2:/home/HwHiAiUser/samples/notebooks/01-yolov5/atlas_yolo_detect_and_upload.py
+```
+
+Run on Atlas:
 
 ```bash
 cd /home/HwHiAiUser/samples/notebooks/01-yolov5
-ls -lah
-find . -maxdepth 2 -type f
+
+python3 atlas_yolo_detect_and_upload.py \
+  --image world_cup.jpg \
+  --model yolo.om \
+  --labels coco_names.txt \
+  --server http://192.168.0.101:5000 \
+  --upload \
+  --force-cloud
 ```
 
-The target integration is:
+Generated files:
 
 ```text
-image file -> Atlas YOLO sample -> detections.json -> atlas_upload_client.py -> laptop cloud service
+detections.json
+summary.json
+annotated.jpg
 ```
+
+Known real test result:
+
+```text
+world_cup.jpg -> 2 person, 1 sports_ball
+latency_ms: 60.46
+fps: 16.54
+```
+
+Add `--analyze` to trigger cloud LLM agent analysis immediately.
