@@ -276,3 +276,4 @@ Do not commit real API keys.
 - `docs/design.md`: system architecture and module design.
 - `docs/api.md`: cloud service API documentation.
 - `docs/demo.md`: demo script and presentation flow.
+- `docs/handoff.md`: project handoff notes for the next maintainer or AI agent.
