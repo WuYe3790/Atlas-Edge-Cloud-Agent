@@ -14,8 +14,9 @@ const trainStatus = document.querySelector("#trainStatus");
 const aviationStatus = document.querySelector("#aviationStatus");
 const hotelStatus = document.querySelector("#hotelStatus");
 const locationStatus = document.querySelector("#locationStatus");
-const edgeDevicesListEl = document.querySelector("#edgeDevicesList");
-const edgeTasksListEl = document.querySelector("#edgeTasksList");
+const edgeDevicesListEl = document.querySelector("#edgeDevicesDashboardGrid");
+const edgeTasksListEl = document.querySelector("#edgeTasksDashboardGrid");
+const edgeTasksListCompactEl = document.querySelector("#edgeTasksListCompact");
 const refreshEdgeTasksBtn = document.querySelector("#refreshEdgeTasksBtn");
 const conversationListEl = document.querySelector("#conversationList");
 const skillsListEl = document.querySelector("#skillsList");
@@ -1431,13 +1432,13 @@ function cleanMarkdownForPreview(text) {
     .trim();
 }
 
-function renderEdgeTasks(tasks) {
-  if (!edgeTasksListEl) return;
+function renderEdgeTasks(tasks, container) {
+  if (!container) return;
   if (!tasks || !tasks.length) {
-    edgeTasksListEl.innerHTML = '<div class="edge-empty">暂无边端任务</div>';
+    container.innerHTML = '<div class="edge-empty">暂无协同推理任务</div>';
     return;
   }
-  edgeTasksListEl.innerHTML = tasks.map((task) => {
+  container.innerHTML = tasks.slice(0, 6).map((task) => {
     const event = task.event || {};
     const summary = event.summary || {};
     const inference = event.inference || {};
@@ -1447,13 +1448,12 @@ function renderEdgeTasks(tasks) {
       : `total:${summary.total_count || 0}`;
     const perfText = inference.fps ? `${inference.fps} FPS` : (inference.latency_ms ? `${inference.latency_ms} ms` : "无性能数据");
     
-    // Clean markdown tags from agent analysis preview
     const rawAnalysis = task.analysis?.answer || "";
     const cleanAnalysis = cleanMarkdownForPreview(rawAnalysis);
     const analysisText = cleanAnalysis
       ? `<div class="edge-task-analysis">
           <div class="analysis-preview-title">云端智能体分析决策：</div>
-          <div class="analysis-preview-body">${escapeHtml(cleanAnalysis).slice(0, 140)}${cleanAnalysis.length > 140 ? "..." : ""}</div>
+          <div class="analysis-preview-body">${escapeHtml(cleanAnalysis).slice(0, 120)}${cleanAnalysis.length > 120 ? "..." : ""}</div>
          </div>`
       : "";
       
@@ -1472,12 +1472,10 @@ function renderEdgeTasks(tasks) {
       ? `<div class="edge-decision-factors">${factors.map((f) => `<span>${escapeHtml(f)}</span>`).join("")}</div>`
       : "";
       
-    // Clarify mode tags so they are not confusing
     const modeBadge = needCloud
       ? '<span class="edge-cloud-chip on" title="触发协同调度机制，数据上云运行智能体深度决策">☁️ 边云协同模式 (数据上云)</span>'
       : '<span class="edge-cloud-chip off" title="目标置信度充足，由边端本地闭环处理，节省网络带宽">💻 边端自闭环模式 (本地处理)</span>';
       
-    // Pipeline indicators
     const yoloCompletedClass = "completed";
     const dispatchCompletedClass = "completed";
     const agentClass = task.analysis ? "completed" : (needCloud ? "pending" : "skipped");
@@ -1499,7 +1497,7 @@ function renderEdgeTasks(tasks) {
         
         <div class="edge-task-meta">
           ${modeBadge}
-          <span>${escapeHtml(task.status === 'completed' ? '处理完成' : (task.status || '已接收'))}</span>
+          <span>${escapeHtml(task.status === 'completed' ? '已分析' : (task.status || '已接收'))}</span>
         </div>
         
         <div class="edge-pipeline">
@@ -1555,10 +1553,14 @@ function renderEdgeTasks(tasks) {
       </div>
     `;
   }).join("");
-  edgeTasksListEl.querySelectorAll(".edge-analyze-btn").forEach((button) => {
-    button.addEventListener("click", () => analyzeEdgeTask(button.dataset.taskId, button));
+  
+  container.querySelectorAll(".edge-analyze-btn").forEach((button) => {
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      analyzeEdgeTask(button.dataset.taskId, button);
+    });
   });
-  edgeTasksListEl.querySelectorAll(".edge-task-card[data-edge-task-id]").forEach((card) => {
+  container.querySelectorAll(".edge-task-card[data-edge-task-id]").forEach((card) => {
     card.addEventListener("click", (e) => {
       if (e.target.closest("a, button")) return;
       const taskId = card.dataset.edgeTaskId;
@@ -1567,64 +1569,204 @@ function renderEdgeTasks(tasks) {
   });
 }
 
-async function loadEdgeTasks() {
-  if (!edgeTasksListEl && !edgeDevicesListEl) return;
-  try {
-    const [tasksResponse, statusResponse] = await Promise.all([
-      fetch("/api/edge/tasks?limit=8"),
-      fetch("/api/edge/status"),
-    ]);
-    const tasksData = await tasksResponse.json();
-    const statusData = await statusResponse.json();
-    renderEdgeDevices(statusData.devices || []);
-    renderEdgeTasks(tasksData.tasks || []);
-  } catch {
-    if (edgeDevicesListEl) edgeDevicesListEl.innerHTML = '<div class="edge-empty">设备状态读取失败</div>';
-    if (edgeTasksListEl) edgeTasksListEl.innerHTML = '<div class="edge-empty">边端任务读取失败</div>';
-  }
-}
-
-function renderEdgeDevices(devices) {
-  if (!edgeDevicesListEl) return;
-  if (!devices || !devices.length) {
-    edgeDevicesListEl.innerHTML = '<div class="edge-empty">暂无设备状态</div>';
+function renderEdgeTasksCompact(tasks, container) {
+  if (!container) return;
+  if (!tasks || !tasks.length) {
+    container.innerHTML = '<div class="edge-empty">暂无协同日志</div>';
     return;
   }
-  edgeDevicesListEl.innerHTML = devices.map((device) => {
-    const metrics = device.system_metrics || {};
-    const memory = metrics.memory || {};
-    const loadavg = metrics.loadavg || {};
-    const npu = metrics.npu || {};
-    const perf = device.latest_fps
-      ? `${device.latest_fps} FPS`
-      : (device.latest_latency_ms ? `${device.latest_latency_ms} ms` : "no perf");
-    const memoryText = memory.used_percent !== undefined ? `内存 ${memory.used_percent}%` : "内存未知";
-    const loadText = loadavg["1m"] !== undefined ? `负载 ${loadavg["1m"]}` : "负载未知";
-    const npuHtml = npu.utilization_percent !== undefined ? `<span>NPU ${npu.utilization_percent}% (${npu.temperature_c}℃)</span>` : "";
-    const pendingCount = device.pending_events || 0;
-    const pendingHtml = pendingCount > 0
-      ? `<span class="pending-chip">待重传 ${pendingCount}</span>`
-      : "";
+  container.innerHTML = tasks.map((task) => {
+    const event = task.event || {};
+    const needCloud = event.edge_decision?.need_cloud_analysis;
+    const imageUrl = event.annotated_image_url || "";
+    const statusClass = task.status === 'completed' ? "completed" : "received";
+    const statusText = task.status === 'completed' ? "已分析" : "已接收";
+    const modeBadgeCompact = needCloud
+      ? '<span class="compact-badge cloud" title="边云协同 (数据上云)">☁️ 协同</span>'
+      : '<span class="compact-badge local" title="边端自闭环 (本地处理)">💻 本地</span>';
+    const timeStr = task.created_at ? task.created_at.slice(11, 16) : '';
+    
     return `
-      <div class="edge-device-card">
-        <div class="edge-device-main">
-          <strong>${escapeHtml(device.device_id || "unknown-device")}</strong>
-          <span>${escapeHtml(device.hostname || "unknown-host")}</span>
+      <div class="edge-task-row-compact" data-edge-task-id="${escapeHtml(task.id || "")}">
+        <div class="task-row-thumb-container">
+          ${imageUrl ? `<img src="${escapeHtml(imageUrl)}" class="task-row-thumb" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">` : ''}
+          <div class="task-row-thumb-fallback" style="${imageUrl ? 'display:none;' : 'display:flex;'}">📷</div>
         </div>
-        <div class="edge-task-meta">
-          <span class="${device.online ? "online-chip" : "offline-chip"}">${device.online ? "在线" : "离线"}</span>
-          <span>${escapeHtml(perf)}</span>
-          <span>${escapeHtml(memoryText)}</span>
-          <span>${escapeHtml(loadText)}</span>
-          ${npuHtml}
-          ${pendingHtml}
-        </div>
-        <div class="edge-device-sub">
-          最近任务：${escapeHtml(device.latest_image_id || "无")} · ${escapeHtml(String(device.age_seconds ?? "未知"))} 秒前
+        <div class="task-row-body">
+          <div class="task-row-header">
+            <span class="task-row-title" title="${escapeHtml(task.image_id || event.image_id || '')}">${escapeHtml(task.image_id || event.image_id || "未命名")}</span>
+            <span class="task-row-time">${escapeHtml(timeStr)}</span>
+          </div>
+          <div class="task-row-meta">
+            ${modeBadgeCompact}
+            <span class="task-row-status-chip ${statusClass}">${statusText}</span>
+            <span class="task-row-device" title="设备 ID: ${escapeHtml(task.device_id || '')}">${escapeHtml(task.device_id || "unknown").slice(-8)}</span>
+          </div>
         </div>
       </div>
     `;
   }).join("");
+  
+  container.querySelectorAll(".edge-task-row-compact[data-edge-task-id]").forEach((row) => {
+    row.addEventListener("click", () => {
+      const taskId = row.dataset.edgeTaskId;
+      if (taskId) openEdgeTaskModal(taskId);
+    });
+  });
+}
+
+function renderEdgeDevicesDashboard(devices, container) {
+  if (!container) return;
+  if (!devices || !devices.length) {
+    container.innerHTML = '<div class="edge-empty">暂无边端设备状态</div>';
+    return;
+  }
+  container.innerHTML = devices.map((device) => {
+    const metrics = device.system_metrics || {};
+    const memory = metrics.memory || {};
+    const loadavg = metrics.loadavg || {};
+    const npu = metrics.npu || {};
+    
+    const statusClass = device.online ? "online" : "offline";
+    const statusText = device.online ? "在线 (活动中)" : "离线 (休眠)";
+    const fpsText = device.latest_fps ? `${device.latest_fps} FPS` : "无数据";
+    const latencyText = device.latest_latency_ms ? `${device.latest_latency_ms} ms` : "无数据";
+    
+    const memPct = memory.used_percent !== undefined ? memory.used_percent : 0;
+    const memText = memory.used_percent !== undefined ? `${memory.used_percent}% (${memory.available_mb || 0} MB 可用 / 共 ${memory.total_mb || 0} MB)` : "无数据";
+    
+    let loadVal = 0;
+    if (typeof loadavg === "string") {
+      loadVal = parseFloat(loadavg.split(" ")[0]) || 0;
+    } else if (loadavg && typeof loadavg === "object") {
+      loadVal = parseFloat(loadavg["1m"]) || 0;
+    }
+    const loadPercent = Math.min(100, Math.round(loadVal * 33));
+    
+    const npuPct = npu.utilization_percent !== undefined ? npu.utilization_percent : 0;
+    const npuTemp = npu.temperature_c !== undefined ? `${npu.temperature_c} ℃` : "无数据";
+    const npuMemPct = npu.memory_used_percent !== undefined ? npu.memory_used_percent : 0;
+    
+    const pendingCount = device.pending_events || 0;
+    const pendingHtml = pendingCount > 0
+      ? `<div class="device-metric-row warning-row">
+           <span class="metric-label">📦 待发重传缓存</span>
+           <span class="metric-val text-cloud">${pendingCount} 个待挂起事件</span>
+         </div>`
+      : "";
+      
+    return `
+      <div class="dashboard-device-card ${statusClass}">
+        <div class="device-card-header">
+          <div class="device-name-area">
+            <h4>${escapeHtml(device.device_id || "unknown-device")}</h4>
+            <span>主机: ${escapeHtml(device.hostname || "unknown-host")}</span>
+          </div>
+          <span class="device-status-badge ${statusClass}">${statusText}</span>
+        </div>
+        
+        <div class="device-card-metrics">
+          <div class="device-metric-group">
+            <h5>⚡ 边端 YOLO 推理性能</h5>
+            <div class="device-perf-grid">
+              <div><span>推理帧率 (FPS)</span><strong>${fpsText}</strong></div>
+              <div><span>单帧延迟 (Latency)</span><strong>${latencyText}</strong></div>
+            </div>
+          </div>
+          
+          <div class="device-metric-group">
+            <h5>📊 硬件指标实时状态</h5>
+            
+            <div class="device-metric-row">
+              <div class="metric-row-label">
+                <span>系统平均负载 (CPU Load 1m)</span>
+                <strong>负载: ${loadVal}</strong>
+              </div>
+              <div class="metric-progress-bg">
+                <div class="metric-progress-fill cpu" style="width: ${loadPercent}%"></div>
+              </div>
+            </div>
+            
+            <div class="device-metric-row">
+              <div class="metric-row-label">
+                <span>系统内存使用率 (RAM Memory)</span>
+                <strong>${memText}</strong>
+              </div>
+              <div class="metric-progress-bg">
+                <div class="metric-progress-fill memory" style="width: ${memPct}%"></div>
+              </div>
+            </div>
+            
+            ${npu.utilization_percent !== undefined ? `
+            <div class="device-metric-row">
+              <div class="metric-row-label">
+                <span>昇腾 NPU 核心利用率</span>
+                <strong>使用率: ${npuPct}% (温度: ${npuTemp})</strong>
+              </div>
+              <div class="metric-progress-bg">
+                <div class="metric-progress-fill npu" style="width: ${npuPct}%"></div>
+              </div>
+            </div>
+            ` : ''}
+            
+            ${npu.memory_used_percent !== undefined ? `
+            <div class="device-metric-row">
+              <div class="metric-row-label">
+                <span>昇腾 NPU 显存使用率</span>
+                <strong>显存: ${npu.memory_used_percent}% (${npu.memory_used_mb}/${npu.memory_total_mb} MB)</strong>
+              </div>
+              <div class="metric-progress-bg">
+                <div class="metric-progress-fill npu" style="width: ${npuMemPct}%"></div>
+              </div>
+            </div>
+            ` : ''}
+          </div>
+          
+          ${pendingHtml}
+        </div>
+        
+        <div class="device-card-footer">
+          <span>最近活跃: ${escapeHtml(device.latest_image_id || "无任务")} · ${device.age_seconds != null ? `${device.age_seconds} 秒前` : "无记录"}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadEdgeTasks() {
+  const edgeTasksListCompactEl = document.querySelector("#edgeTasksListCompact");
+  const edgeDevicesDashboardGridEl = document.querySelector("#edgeDevicesDashboardGrid");
+  const edgeTasksDashboardGridEl = document.querySelector("#edgeTasksDashboardGrid");
+
+  try {
+    const [tasksResponse, statusResponse] = await Promise.all([
+      fetch("/api/edge/tasks?limit=24"),
+      fetch("/api/edge/status"),
+    ]);
+    const tasksData = await tasksResponse.json();
+    const statusData = await statusResponse.json();
+    
+    if (edgeDevicesDashboardGridEl) {
+      renderEdgeDevicesDashboard(statusData.devices || [], edgeDevicesDashboardGridEl);
+    }
+    if (edgeTasksDashboardGridEl) {
+      renderEdgeTasks(tasksData.tasks || [], edgeTasksDashboardGridEl);
+    }
+    if (edgeTasksListCompactEl) {
+      renderEdgeTasksCompact(tasksData.tasks || [], edgeTasksListCompactEl);
+    }
+  } catch (err) {
+    console.error("Error loading edge logs:", err);
+    if (edgeDevicesDashboardGridEl) {
+      edgeDevicesDashboardGridEl.innerHTML = '<div class="edge-empty">设备状态监控数据读取失败</div>';
+    }
+    if (edgeTasksDashboardGridEl) {
+      edgeTasksDashboardGridEl.innerHTML = '<div class="edge-empty">边端协同任务流读取失败</div>';
+    }
+    if (edgeTasksListCompactEl) {
+      edgeTasksListCompactEl.innerHTML = '<div class="edge-empty">任务日志读取失败</div>';
+    }
+  }
 }
 
 async function analyzeEdgeTask(taskId, button) {
@@ -2381,6 +2523,21 @@ function switchTab(tabId) {
   tabContents.forEach(content => {
     content.classList.toggle("active", content.id === `tab-${tabId}`);
   });
+  
+  // Switch main content area
+  const chatPanel = document.querySelector(".chat-panel");
+  const edgeCloudPanel = document.querySelector("#edgeCloudPanel");
+  if (chatPanel && edgeCloudPanel) {
+    if (tabId === "edge") {
+      chatPanel.hidden = true;
+      edgeCloudPanel.hidden = false;
+      loadEdgeTasks();
+    } else {
+      chatPanel.hidden = false;
+      edgeCloudPanel.hidden = true;
+    }
+  }
+  
   localStorage.setItem(ACTIVE_TAB_KEY, tabId);
 }
 
@@ -2418,6 +2575,13 @@ if (expandSidebarBtn) {
   });
 }
 
+const expandSidebarBtnEdge = document.querySelector("#expandSidebarBtnEdge");
+if (expandSidebarBtnEdge) {
+  expandSidebarBtnEdge.addEventListener("click", () => {
+    setSidebarCollapsed(false);
+  });
+}
+
 // Restore sidebar state
 const savedSidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
 setSidebarCollapsed(savedSidebarCollapsed);
@@ -2440,6 +2604,11 @@ loadConversations().then(() => {
 
 if (refreshEdgeTasksBtn) {
   refreshEdgeTasksBtn.addEventListener("click", loadEdgeTasks);
+}
+
+const refreshEdgeDashboardBtn = document.querySelector("#refreshEdgeDashboardBtn");
+if (refreshEdgeDashboardBtn) {
+  refreshEdgeDashboardBtn.addEventListener("click", loadEdgeTasks);
 }
 
 setInterval(loadEdgeTasks, 10000);
