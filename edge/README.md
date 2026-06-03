@@ -22,6 +22,37 @@ Expected result:
 }
 ```
 
+## 1.1 Keep Device Online In The Dashboard
+
+The dashboard marks a device online only when the laptop cloud service has received a recent heartbeat or task upload. Start a continuous heartbeat on Atlas:
+
+```bash
+cd /home/HwHiAiUser
+python3 atlas_upload_client.py \
+  --server http://192.168.0.101:5000 \
+  --heartbeat \
+  --watch \
+  --interval 30
+```
+
+Run it in the background:
+
+```bash
+cd /home/HwHiAiUser
+nohup python3 atlas_upload_client.py \
+  --server http://192.168.0.101:5000 \
+  --heartbeat \
+  --watch \
+  --interval 30 \
+  > atlas_heartbeat.log 2>&1 &
+```
+
+Stop the background heartbeat:
+
+```bash
+pkill -f "atlas_upload_client.py.*--heartbeat"
+```
+
 ## 2. Upload A Manual Detection Result
 
 Create `detections.json` on Atlas:

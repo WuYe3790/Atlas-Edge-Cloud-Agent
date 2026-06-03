@@ -305,11 +305,36 @@ def send_heartbeat(server: str, args: argparse.Namespace) -> dict[str, Any]:
         "device_id": args.device_id,
         "hostname": socket.gethostname(),
         "system_metrics": collect_system_metrics(),
+        "pending_events": len(load_pending_events()),
         "note": args.reason or "manual heartbeat",
     }
     response = requests.post(url, json=payload, timeout=args.timeout)
     response.raise_for_status()
     return response.json()
+
+
+def watch_heartbeat(server: str, args: argparse.Namespace) -> int:
+    print(f"[heartbeat] watching {server.rstrip('/')} every {args.interval}s. Press Ctrl+C to stop.", file=sys.stderr)
+    while True:
+        try:
+            result = send_heartbeat(server, args)
+            device = result.get("device", {}) if isinstance(result.get("device"), dict) else {}
+            status = device.get("latest_status", "heartbeat")
+            print(
+                json.dumps(
+                    {
+                        "ok": result.get("ok", False),
+                        "device_id": args.device_id,
+                        "status": status,
+                        "pending_events": len(load_pending_events()),
+                        "time": utc_now(),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except requests.RequestException as exc:
+            print(f"[heartbeat] failed: {exc}", file=sys.stderr)
+        time.sleep(max(1, args.interval))
 
 
 def parse_args() -> argparse.Namespace:
@@ -330,6 +355,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--analyze", action="store_true", help="Ask cloud agent to analyze the task after upload")
     parser.add_argument("--health", action="store_true", help="Only check /api/health")
     parser.add_argument("--heartbeat", action="store_true", help="Send device heartbeat to /api/edge/heartbeat")
+    parser.add_argument("--watch", action="store_true", help="Keep sending heartbeat until interrupted. Use with --heartbeat.")
+    parser.add_argument("--interval", type=int, default=60, help="Heartbeat watch interval in seconds")
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--save-event", help="Save outgoing event JSON for debugging")
     parser.add_argument("--retry-pending", action="store_true", help="Retry all pending events from pending_events/ directory")
@@ -343,6 +370,8 @@ def main() -> int:
             check_health(args.server, args.timeout)
             return 0
         if args.heartbeat:
+            if args.watch:
+                return watch_heartbeat(args.server, args)
             result = send_heartbeat(args.server, args)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0

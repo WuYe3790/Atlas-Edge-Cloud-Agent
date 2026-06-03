@@ -311,6 +311,7 @@ python3 atlas_yolo_detect_and_upload.py \
 
 1. **重新实机验证最新边端脚本**
    - 将 `edge/atlas_yolo_detect_and_upload.py` 和 `edge/atlas_upload_client.py` 重新上传到 Atlas；
+   - 用 `atlas_upload_client.py --heartbeat --watch --interval 30` 持续上报设备在线、loadavg、内存、NPU 与待重传事件数量；
    - 运行 `world_cup.jpg` 闭环，确认检测结果、标注图、调度决策、云端 Agent 分析和前端详情弹窗均正常；
    - 运行一次 `--retry-pending`，确认离线重传命令没有语法或路径问题。
 
