@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import socket
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -44,6 +46,44 @@ def collect_system_metrics() -> dict[str, Any]:
             raw = ""
         if raw:
             metrics[key] = raw
+    try:
+        res = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=2.0)
+        if res.returncode == 0:
+            stdout = res.stdout
+            match = re.search(r"\|\s*(\d+)\s+([A-Za-z0-9\-\_]+)\s*\|\s*([A-Za-z]+)\s*\|\s*([\d\.]+)\s+([\d\.]+)\s+(\d+)\((\d+)/(\d+)\)\s*\|", stdout)
+            if match:
+                npu_id = int(match.group(1))
+                npu_name = match.group(2)
+                health = match.group(3)
+                temp = float(match.group(4))
+                power = float(match.group(5))
+                mem_percent = float(match.group(6))
+                mem_used = int(match.group(7))
+                mem_total = int(match.group(8))
+                metrics["npu"] = {
+                    "npu_id": npu_id,
+                    "name": npu_name,
+                    "health": health,
+                    "temperature_c": temp,
+                    "power_w": power,
+                    "utilization_percent": int(mem_percent),
+                    "memory_used_mb": mem_used,
+                    "memory_total_mb": mem_total,
+                    "memory_used_percent": round(mem_used / mem_total * 100, 1) if mem_total else 0.0,
+                }
+            else:
+                match_simple = re.search(r"\|\s*(\d+)\s+([A-Za-z0-9\-\_]+)\s*\|\s*([A-Za-z]+)\s*\|\s*([\d\.]+)\s+([\d\.]+)\s+(\d+)\s*\|", stdout)
+                if match_simple:
+                    metrics["npu"] = {
+                        "npu_id": int(match_simple.group(1)),
+                        "name": match_simple.group(2),
+                        "health": match_simple.group(3),
+                        "temperature_c": float(match_simple.group(4)),
+                        "power_w": float(match_simple.group(5)),
+                        "utilization_percent": int(match_simple.group(6)),
+                    }
+    except Exception:
+        pass
     return metrics
 
 
@@ -310,8 +350,11 @@ def main() -> int:
             result = post_event(args.server, event, args.timeout)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             if args.analyze and result.get("task_id"):
-                analysis = analyze_task(args.server, result["task_id"], max(args.timeout, 90))
-                print(json.dumps(analysis, ensure_ascii=False, indent=2))
+                try:
+                    analysis = analyze_task(args.server, result["task_id"], max(args.timeout, 90))
+                    print(json.dumps(analysis, ensure_ascii=False, indent=2))
+                except requests.RequestException as exc:
+                    print(f"事件已成功上传 (task_id: {result.get('task_id')})，但触发云端分析失败或超时: {exc}", file=sys.stderr)
             print(f"elapsed_seconds={time.time() - started:.2f}", file=sys.stderr)
             return 0
         except requests.RequestException as exc:

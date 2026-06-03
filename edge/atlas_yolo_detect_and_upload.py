@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import socket
+import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -179,13 +182,54 @@ def collect_system_metrics() -> dict[str, Any]:
         metrics["uptime_seconds"] = round(uptime_seconds, 1)
     except Exception:
         pass
+    try:
+        res = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=2.0)
+        if res.returncode == 0:
+            stdout = res.stdout
+            match = re.search(r"\|\s*(\d+)\s+([A-Za-z0-9\-\_]+)\s*\|\s*([A-Za-z]+)\s*\|\s*([\d\.]+)\s+([\d\.]+)\s+(\d+)\((\d+)/(\d+)\)\s*\|", stdout)
+            if match:
+                npu_id = int(match.group(1))
+                npu_name = match.group(2)
+                health = match.group(3)
+                temp = float(match.group(4))
+                power = float(match.group(5))
+                mem_percent = float(match.group(6))
+                mem_used = int(match.group(7))
+                mem_total = int(match.group(8))
+                metrics["npu"] = {
+                    "npu_id": npu_id,
+                    "name": npu_name,
+                    "health": health,
+                    "temperature_c": temp,
+                    "power_w": power,
+                    "utilization_percent": int(mem_percent),
+                    "memory_used_mb": mem_used,
+                    "memory_total_mb": mem_total,
+                    "memory_used_percent": round(mem_used / mem_total * 100, 1) if mem_total else 0.0,
+                }
+            else:
+                match_simple = re.search(r"\|\s*(\d+)\s+([A-Za-z0-9\-\_]+)\s*\|\s*([A-Za-z]+)\s*\|\s*([\d\.]+)\s+([\d\.]+)\s+(\d+)\s*\|", stdout)
+                if match_simple:
+                    metrics["npu"] = {
+                        "npu_id": int(match_simple.group(1)),
+                        "name": match_simple.group(2),
+                        "health": match_simple.group(3),
+                        "temperature_c": float(match_simple.group(4)),
+                        "power_w": float(match_simple.group(5)),
+                        "utilization_percent": int(match_simple.group(6)),
+                    }
+    except Exception:
+        pass
     return metrics
 
 
-def run_yolo(image_path: Path, model_path: Path, label_path: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
-    image = cv2.imread(str(image_path))
-    if image is None:
-        raise FileNotFoundError(f"Could not read image: {image_path}")
+def run_yolo(image_or_path: Path | np.ndarray, model_path: Path, label_path: Path, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
+    if isinstance(image_or_path, Path):
+        image = cv2.imread(str(image_or_path))
+        if image is None:
+            raise FileNotFoundError(f"Could not read image: {image_or_path}")
+    else:
+        image = image_or_path
 
     labels = load_labels(label_path)
     model = InferSession(0, str(model_path))
@@ -224,6 +268,8 @@ def build_event(
     summary: dict[str, Any],
     latency_ms: float,
     annotated_image_path: Path | None = None,
+    image_id: str | None = None,
+    image_path_str: str | None = None,
 ) -> dict[str, Any]:
     fps = 1000.0 / latency_ms if latency_ms > 0 else None
     system_metrics = collect_system_metrics()
@@ -233,13 +279,17 @@ def build_event(
     )
     if args.reason:
         edge_decision["reason"] = args.reason
+
+    resolved_image_id = image_id or (Path(args.image).name if args.image else "camera_frame.jpg")
+    resolved_image_path = image_path_str or (str(Path(args.image).resolve()) if args.image else "camera")
+
     event = {
         "device_id": args.device_id,
         "hostname": socket.gethostname(),
         "timestamp": utc_now(),
-        "image_id": Path(args.image).name,
-        "image_path": str(Path(args.image).resolve()),
-        "source_type": "uploaded_image",
+        "image_id": resolved_image_id,
+        "image_path": resolved_image_path,
+        "source_type": "camera_stream" if args.camera else "uploaded_image",
         "inference": {
             "model": Path(args.model).name,
             "latency_ms": round(latency_ms, 2),
@@ -324,7 +374,9 @@ def retry_pending_events(server_url: str, timeout: int) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Atlas YOLO image inference and optionally upload result to laptop cloud service.")
-    parser.add_argument("--image", required=True, help="Input image path")
+    parser.add_argument("--image", default="", help="Input image path")
+    parser.add_argument("--camera", default=None, help="Camera index (e.g. 0) or RTSP stream URL to process real-time frame stream.")
+    parser.add_argument("--interval-sec", type=float, default=5.0, help="Interval in seconds between processing camera frames.")
     parser.add_argument("--model", default="yolo.om", help="Atlas OM model path")
     parser.add_argument("--labels", default="coco_names.txt", help="Label file path")
     parser.add_argument("--server", default="", help="Laptop cloud base URL, for example http://192.168.0.101:5000")
@@ -354,15 +406,96 @@ def main() -> int:
             raise ValueError("--server is required when --retry-pending is set")
         return retry_pending_events(args.server.rstrip("/"), args.timeout)
 
+    # Validate image or camera
+    if not args.camera and not args.image:
+        raise ValueError("Either --image or --camera must be provided when not in --retry-pending mode")
+
     cfg = {
         **DEFAULT_CFG,
         "conf_thres": args.conf_thres,
         "iou_thres": args.iou_thres,
     }
 
-    image_path = Path(args.image)
     model_path = Path(args.model)
     label_path = Path(args.labels)
+    annotated_image_path = Path(args.annotated_image)
+
+    # 1. Camera Stream Mode
+    if args.camera:
+        camera_source: int | str = args.camera
+        try:
+            camera_source = int(args.camera)
+        except ValueError:
+            pass
+
+        print(f"[camera] Opening video capture source: {camera_source}")
+        cap = cv2.VideoCapture(camera_source)
+        if not cap.isOpened():
+            print(f"[camera] Error: Could not open video source {camera_source}", file=sys.stderr)
+            return 1
+
+        print(f"[camera] Starting real-time YOLO loop. Interval: {args.interval_sec}s. Press Ctrl+C to stop.")
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("[camera] Error: Could not read frame from camera. Retrying in 1s...", file=sys.stderr)
+                    time.sleep(1.0)
+                    continue
+
+                started_time = datetime.now()
+                timestamp_str = started_time.strftime("%Y%m%d_%H%M%S")
+                image_id = f"frame_{timestamp_str}.jpg"
+
+                detections, latency_ms = run_yolo(frame, model_path, label_path, cfg)
+                summary = summarize(detections)
+
+                # Save local JSONs and annotated images
+                Path(args.output_json).write_text(json.dumps(detections, ensure_ascii=False, indent=2), encoding="utf-8")
+                Path(args.summary_json).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+                cv2.imwrite(str(annotated_image_path), draw_detections(frame, detections))
+
+                event = build_event(
+                    args, detections, summary, latency_ms,
+                    annotated_image_path=annotated_image_path,
+                    image_id=image_id,
+                    image_path_str=f"camera_{camera_source}",
+                )
+
+                print(f"[camera] Frame processed. Latency: {latency_ms:.1f}ms, targets: {summary['total_count']}")
+
+                if args.upload:
+                    if not args.server:
+                        print("[camera] Error: --server is required for uploading", file=sys.stderr)
+                    else:
+                        server_url = args.server.rstrip("/")
+                        try:
+                            result = post_json(server_url + "/api/edge/events", event, args.timeout)
+                            print(f"[camera] Event uploaded successfully. task_id: {result.get('task_id')}")
+                            should_analyze = not args.no_analyze
+                            if should_analyze and result.get("task_id"):
+                                try:
+                                    analysis = post_json(
+                                        server_url + "/api/edge/analyze",
+                                        {"task_id": result["task_id"]},
+                                        max(args.timeout, 120),
+                                    )
+                                    print(f"[camera] Cloud analysis complete for {result.get('task_id')}")
+                                except requests.RequestException as exc:
+                                    print(f"[camera] Warning: analysis trigger failed: {exc}", file=sys.stderr)
+                        except requests.RequestException as exc:
+                            saved = save_pending_event(event)
+                            print(f"[camera] Upload failed. Event saved to retry queue: {saved}. Error: {exc}", file=sys.stderr)
+
+                time.sleep(max(0.1, args.interval_sec))
+        except KeyboardInterrupt:
+            print("\n[camera] Loop stopped by user.")
+        finally:
+            cap.release()
+        return 0
+
+    # 2. Static Image Mode
+    image_path = Path(args.image)
     detections, latency_ms = run_yolo(image_path, model_path, label_path, cfg)
     summary = summarize(detections)
 
@@ -370,7 +503,6 @@ def main() -> int:
     Path(args.summary_json).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     image = cv2.imread(str(image_path))
-    annotated_image_path = Path(args.annotated_image)
     cv2.imwrite(str(annotated_image_path), draw_detections(image, detections))
 
     event = build_event(args, detections, summary, latency_ms, annotated_image_path=annotated_image_path)
@@ -385,12 +517,15 @@ def main() -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             should_analyze = not args.no_analyze
             if should_analyze and result.get("task_id"):
-                analysis = post_json(
-                    server_url + "/api/edge/analyze",
-                    {"task_id": result["task_id"]},
-                    max(args.timeout, 120),
-                )
-                print(json.dumps(analysis, ensure_ascii=False, indent=2))
+                try:
+                    analysis = post_json(
+                        server_url + "/api/edge/analyze",
+                        {"task_id": result["task_id"]},
+                        max(args.timeout, 120),
+                    )
+                    print(json.dumps(analysis, ensure_ascii=False, indent=2))
+                except requests.RequestException as exc:
+                    print(f"事件已成功上传 (task_id: {result.get('task_id')})，但触发云端分析失败或超时: {exc}", file=sys.stderr)
         except requests.RequestException as exc:
             saved = save_pending_event(event)
             print(f"上传失败，事件已保存到 {saved}。稍后使用 --retry-pending 重传。错误: {exc}", file=sys.stderr)

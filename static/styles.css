@@ -2361,12 +2361,52 @@ textarea {
   font-size: 11px;
 }
 
+.edge-task-image-container {
+  position: relative;
+  width: 100%;
+  height: 130px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f1f5f9;
+  border: 1px solid var(--line);
+}
+
 .edge-task-image {
   width: 100%;
-  max-height: 180px;
-  border-radius: 8px;
+  height: 100%;
   object-fit: cover;
-  background: #f8fafc;
+  transition: transform 0.3s ease;
+}
+
+.edge-task-card:hover .edge-task-image {
+  transform: scale(1.04);
+}
+
+.edge-task-image-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  background: linear-gradient(135deg, #f8fafc, #e2e8f0);
+}
+
+.edge-task-image-fallback svg {
+  stroke: var(--muted);
+  animation: pulse-fallback-icon 2s infinite ease-in-out;
+}
+
+@keyframes pulse-fallback-icon {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.edge-task-image-fallback span {
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .edge-task-main {
@@ -2389,16 +2429,16 @@ textarea {
 .edge-task-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 4px;
 }
 
 .edge-task-meta span {
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: 4px;
   background: #eef4ff;
   color: var(--accent-dark);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .edge-task-meta span.online-chip {
@@ -2418,62 +2458,162 @@ textarea {
 
 .edge-cloud-chip {
   font-weight: 700;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .edge-cloud-chip.on {
-  background: #fef3c7;
-  color: #92400e;
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #ffedd5;
 }
 
 .edge-cloud-chip.off {
-  background: #dcfce7;
-  color: #166534;
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #dcfce7;
 }
 
 .edge-decision-factors {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 4px 0;
+  padding: 2px 0 0 0;
 }
 
 .edge-decision-factors span {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: #fde68a;
-  color: #78350f;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475467;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* ---- Edge Task Workflow Pipeline ---- */
+.edge-pipeline {
+  display: grid;
+  gap: 12px;
+  padding: 8px 4px;
+  position: relative;
+  background: #fafbfc;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.pipeline-step {
+  display: flex;
+  gap: 12px;
+  position: relative;
+}
+
+.step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #cbd5e1;
+  transition: all 0.3s ease;
+  margin-top: 3px;
+}
+
+.step-line {
+  width: 2px;
+  flex: 1;
+  background: #cbd5e1;
+  margin: 4px 0 0 0;
+}
+
+.pipeline-step.completed .step-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 1px var(--success);
+}
+
+.pipeline-step.completed .step-line {
+  background: var(--success);
+}
+
+.pipeline-step.pending .step-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+  animation: pulse-step-dot 1.5s infinite;
+}
+
+@keyframes pulse-step-dot {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+}
+
+.pipeline-step.skipped .step-dot {
+  background: #94a3b8;
+  box-shadow: 0 0 0 1px #94a3b8;
+}
+
+.step-content {
+  flex: 1;
   font-size: 11px;
+  line-height: 1.4;
+}
+
+.step-title {
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.step-desc {
+  color: var(--muted);
+}
+
+.step-desc strong {
+  color: var(--text);
+}
+
+.step-reason {
+  font-size: 10px;
+  color: #7c2d12;
+  background: #fff7ed;
+  padding: 3px 6px;
+  border-radius: 4px;
+  margin-top: 4px;
+  border-left: 2px solid #f97316;
+}
+
+.text-cloud {
+  color: #f97316;
+  font-weight: 700;
+}
+
+.text-local {
+  color: #059669;
   font-weight: 700;
 }
 
 .edge-task-analysis {
-  padding: 8px;
-  border-radius: 8px;
-  background: #f8fafc;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
+  border-top: 1px dashed var(--line);
+  padding: 8px 4px 0 4px;
+  font-size: 11px;
 }
 
-.edge-task-flow {
-  display: grid;
-  gap: 4px;
-  padding: 8px;
-  border-radius: 8px;
-  background: #fff7ed;
-  color: #7c2d12;
-  font-size: 12px;
+.analysis-preview-title {
+  font-weight: 700;
+  color: var(--accent-dark);
+  margin-bottom: 3px;
+}
+
+.analysis-preview-body {
+  color: #475467;
   line-height: 1.45;
-}
-
-.edge-task-flow b {
-  display: inline-flex;
-  min-width: 38px;
-  margin-right: 6px;
-  color: #9a3412;
 }
 
 .edge-task-actions {
@@ -2779,4 +2919,90 @@ textarea {
 .edge-task-card:hover {
   border-color: var(--accent);
   box-shadow: 0 2px 12px rgba(37, 99, 235, 0.1);
+}
+
+/* ---- Metrics visual progress dashboard ---- */
+.modal-metrics-dashboard {
+  display: grid;
+  gap: 12px;
+  background: #f8fafc;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+
+.modal-metric-visual-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.metric-visual-label {
+  width: 110px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.metric-visual-progress-bg {
+  flex: 1;
+  background: #e2e8f0;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.metric-visual-progress-fill {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.4s ease;
+}
+
+.metric-visual-progress-fill.cpu {
+  background: #3b82f6;
+}
+
+.metric-visual-progress-fill.memory {
+  background: #10b981;
+}
+
+.metric-visual-progress-fill.npu {
+  background: #f59e0b;
+}
+
+.metric-visual-value {
+  width: 140px;
+  text-align: right;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.modal-metrics-raw {
+  margin-top: 8px;
+}
+
+.modal-metrics-raw summary {
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 600;
+  width: fit-content;
+  user-select: none;
+}
+
+.modal-metrics-raw summary:hover {
+  color: var(--accent-dark);
+}
+
+.modal-report-link.html-report {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.05);
+  color: #047857;
+}
+
+.modal-report-link.html-report:hover {
+  background: #d1fae5;
+  border-color: #10b981;
 }

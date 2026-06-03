@@ -150,6 +150,367 @@ def edge_task_report(task_id: str):
     )
 
 
+@edge_bp.get("/api/edge/tasks/<task_id>/report/html")
+def edge_task_report_html(task_id: str):
+    task = get_edge_task(task_id)
+    if not task:
+        return jsonify({"ok": False, "error": "Task not found"}), 404
+
+    event = task.get("event") or {}
+    inference = event.get("inference") if isinstance(event.get("inference"), dict) else {}
+    summary = event.get("summary") if isinstance(event.get("summary"), dict) else {}
+    detections = event.get("detections") if isinstance(event.get("detections"), list) else []
+    system_metrics = event.get("system_metrics") if isinstance(event.get("system_metrics"), dict) else {}
+    edge_decision = event.get("edge_decision") if isinstance(event.get("edge_decision"), dict) else {}
+    analysis = task.get("analysis") if isinstance(task.get("analysis"), dict) else {}
+    trace = analysis.get("trace") if isinstance(analysis.get("trace"), list) else []
+    annotated_url = event.get("annotated_image_url", "")
+
+    from flask import render_template_string
+
+    html_template = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>边云协同任务报告 - {{ task_id }}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f8fafc;
+            --text: #0f172a;
+            --muted: #64748b;
+            --line: #e2e8f0;
+            --primary: #3b82f6;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+        body {
+            font-family: 'Inter', 'Noto Sans SC', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .report-card {
+            background: #ffffff;
+            width: 100%;
+            max-width: 850px;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.05);
+            border: 1px solid var(--line);
+        }
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid var(--line);
+            padding-bottom: 20px;
+            margin-bottom: 24px;
+        }
+        .report-title h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .report-title p {
+            margin: 5px 0 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .status-badge.completed { background: #d1fae5; color: #065f46; }
+        .status-badge.received { background: #dbeafe; color: #1e40af; }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+        .info-item {
+            background: #f1f5f9;
+            padding: 12px 16px;
+            border-radius: 8px;
+        }
+        .info-item span {
+            display: block;
+            font-size: 11px;
+            color: var(--muted);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .info-item strong {
+            font-size: 14px;
+            color: var(--text);
+            word-break: break-all;
+        }
+        
+        .section-title {
+            font-size: 16px;
+            font-weight: 700;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 8px;
+            margin: 30px 0 16px;
+        }
+        
+        .annotated-img {
+            width: 100%;
+            border-radius: 12px;
+            border: 1px solid var(--line);
+            margin-bottom: 20px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--line);
+            font-size: 13px;
+        }
+        th { background: #f8fafc; font-weight: 600; }
+        
+        .metric-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            font-size: 13px;
+        }
+        .metric-label { width: 120px; font-weight: 500; }
+        .metric-bar-bg {
+            flex: 1;
+            background: #e2e8f0;
+            height: 10px;
+            border-radius: 999px;
+            margin: 0 16px;
+            overflow: hidden;
+        }
+        .metric-bar-fill {
+            height: 100%;
+            border-radius: 999px;
+        }
+        .metric-bar-fill.cpu { background: var(--primary); }
+        .metric-bar-fill.memory { background: var(--success); }
+        .metric-bar-fill.npu { background: var(--warning); }
+        .metric-value { width: 140px; text-align: right; color: var(--muted); }
+        
+        .analysis-content {
+            line-height: 1.6;
+            font-size: 14px;
+        }
+        .analysis-content p { margin: 0 0 12px; }
+        .analysis-content ul, .analysis-content ol { margin: 0 0 12px; padding-left: 20px; }
+        .analysis-content li { margin-bottom: 4px; }
+        
+        .trace-timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .trace-node {
+            display: flex;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--line);
+            background: #fafbfc;
+            font-size: 13px;
+        }
+        .trace-node.tool_call { border-left: 4px solid var(--primary); }
+        .trace-node.llm_response { border-left: 4px solid var(--success); }
+        .trace-node-icon { font-size: 16px; }
+        .trace-node-body { flex: 1; }
+        .trace-node-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .trace-node-name { font-weight: 600; }
+        .trace-node-duration { font-size: 11px; color: var(--muted); }
+        .trace-node-details { font-size: 12px; color: var(--muted); margin-top: 4px; }
+        
+        @media print {
+            body { padding: 0; background: #fff; }
+            .report-card { border: 0; box-shadow: none; padding: 0; max-width: 100%; }
+            .trace-timeline, .section-title:last-of-type, .trace-timeline + * { page-break-inside: avoid; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="report-card">
+        <header class="report-header">
+            <div class="report-title">
+                <h1>边云协同任务报告</h1>
+                <p>Task ID: {{ task_id }}</p>
+            </div>
+            <span class="status-badge {{ status_class }}">{{ status }}</span>
+        </header>
+        
+        <div class="info-grid">
+            <div class="info-item"><span>设备 ID</span><strong>{{ device_id }}</strong></div>
+            <div class="info-item"><span>主机名</span><strong>{{ hostname }}</strong></div>
+            <div class="info-item"><span>更新时间</span><strong>{{ updated_at }}</strong></div>
+            <div class="info-item"><span>图片 ID</span><strong>{{ image_id }}</strong></div>
+        </div>
+        
+        <h2 class="section-title">推理性能</h2>
+        <div class="info-grid">
+            <div class="info-item"><span>模型</span><strong>{{ inference.model }}</strong></div>
+            <div class="info-item"><span>推理延迟</span><strong>{{ inference.latency_ms }} ms</strong></div>
+            <div class="info-item"><span>FPS</span><strong>{{ inference.fps }}</strong></div>
+            <div class="info-item"><span>调度决策</span><strong>{{ edge_decision.handled_locally and '本地处理' or '云端决策' }}</strong></div>
+        </div>
+        
+        {% if annotated_url %}
+        <h2 class="section-title">标注图像</h2>
+        <img class="annotated-img" src="{{ annotated_url }}" alt="标注图像">
+        {% endif %}
+        
+        <h2 class="section-title">目标检测明细 (共 {{ detections|length }} 个目标)</h2>
+        {% if detections %}
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>类别</th>
+                    <th>类别 ID</th>
+                    <th>置信度</th>
+                    <th>边界框 (x1, y1, x2, y2)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in detections %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td><strong>{{ d.class_name }}</strong></td>
+                    <td>{{ d.class_id }}</td>
+                    <td>{{ (d.confidence * 100)|round(1) }}%</td>
+                    <td>{{ d.bbox|map('round', 1)|join(', ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color: var(--muted); font-size: 13px;">无检测目标</p>
+        {% endif %}
+        
+        <h2 class="section-title">系统指标</h2>
+        {% if system_metrics %}
+        <div style="margin-bottom: 24px;">
+            {% if system_metrics.memory %}
+            <div class="metric-row">
+                <span class="metric-label">内存使用率</span>
+                <div class="metric-bar-bg">
+                    <div class="metric-bar-fill memory" style="width: {{ system_metrics.memory.used_percent }}%"></div>
+                </div>
+                <span class="metric-value">{{ system_metrics.memory.used_percent }}% ({{ system_metrics.memory.available_mb }}MB 可用)</span>
+            </div>
+            {% endif %}
+            
+            {% if system_metrics.loadavg %}
+            <div class="metric-row">
+                <span class="metric-label">系统负载 (1m)</span>
+                {% set load_val = (system_metrics.loadavg is string) and (system_metrics.loadavg.split()[0]|float) or (system_metrics.loadavg['1m']|float) %}
+                {% set load_pct = [load_val * 33, 100]|min %}
+                <div class="metric-bar-bg">
+                    <div class="metric-bar-fill cpu" style="width: {{ load_pct }}%"></div>
+                </div>
+                <span class="metric-value">负载: {{ load_val }}</span>
+            </div>
+            {% endif %}
+            
+            {% if system_metrics.npu %}
+            <div class="metric-row">
+                <span class="metric-label">NPU 使用率</span>
+                <div class="metric-bar-bg">
+                    <div class="metric-bar-fill npu" style="width: {{ system_metrics.npu.utilization_percent }}%"></div>
+                </div>
+                <span class="metric-value">{{ system_metrics.npu.utilization_percent }}% ({{ system_metrics.npu.temperature_c }}℃)</span>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <p style="color: var(--muted); font-size: 13px;">无系统指标</p>
+        {% endif %}
+        
+        <h2 class="section-title">云端 Agent 分析</h2>
+        <div id="analysis-box" class="analysis-content">
+            {{ analysis_markdown|tojson }}
+        </div>
+        
+        {% if trace %}
+        <h2 class="section-title">智能体执行追踪</h2>
+        <div class="trace-timeline">
+            {% for item in trace %}
+            {% if item.type == 'tool_call' %}
+            <div class="trace-node tool_call">
+                <div class="trace-node-icon">🔧</div>
+                <div class="trace-node-body">
+                    <div class="trace-node-header">
+                        <span class="trace-node-name">调用工具: {{ item.tool }}</span>
+                        <span class="trace-node-duration">{{ item.duration_ms }}ms</span>
+                    </div>
+                    <div class="trace-node-details">参数: {{ item.args|tojson }}</div>
+                    {% if item.result %}
+                    <div class="trace-node-details" style="color:var(--text); margin-top:4px;"><strong>返回:</strong> {{ item.result[:200] }}{{ item.result|length > 200 and '...' or '' }}</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% elif item.type == 'llm_response' %}
+            <div class="trace-node llm_response">
+                <div class="trace-node-icon">🤖</div>
+                <div class="trace-node-body">
+                    <div class="trace-node-header">
+                        <span class="trace-node-name">模型响应: {{ item.model }}</span>
+                        <span class="trace-node-duration">Token 消耗: {{ item.usage.total_tokens or '未知' }}</span>
+                    </div>
+                    <div class="trace-node-details">状态: {{ item.status }}</div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    
+    <script>
+        const mdText = JSON.parse(document.getElementById('analysis-box').textContent);
+        document.getElementById('analysis-box').innerHTML = marked.parse(mdText || '尚未生成分析结果');
+    </script>
+</body>
+</html>"""
+
+    rendered = render_template_string(
+        html_template,
+        task_id=task.get("id"),
+        status=task.get("status"),
+        status_class=task.get("status", "").lower(),
+        device_id=task.get("device_id"),
+        hostname=event.get("hostname", ""),
+        updated_at=task.get("updated_at"),
+        image_id=task.get("image_id"),
+        inference=inference,
+        edge_decision=edge_decision,
+        annotated_url=annotated_url,
+        detections=detections,
+        summary=summary,
+        system_metrics=system_metrics,
+        analysis_markdown=analysis.get("answer") or "尚未生成云端分析。",
+        trace=trace
+    )
+    return Response(rendered, mimetype="text/html; charset=utf-8")
+
+
 @edge_bp.get("/api/edge/artifacts/<path:filename>")
 def edge_artifact(filename: str):
     return send_from_directory(EDGE_ARTIFACT_DIR, filename)
@@ -252,7 +613,12 @@ def _summarize_detections(detections: Any) -> dict[str, Any]:
                 continue
             class_name = str(item.get("class_name") or item.get("label") or "unknown")
             counts[class_name] = counts.get(class_name, 0) + 1
-    return {"total_count": sum(counts.values()), "class_counts": counts}
+    return {
+        "total_count": sum(counts.values()),
+        "class_counts": counts,
+        "person_count": counts.get("person", 0),
+        "vehicle_count": sum(counts.get(name, 0) for name in ("car", "bus", "truck", "motorcycle", "bicycle")),
+    }
 
 
 def _compute_scheduling(

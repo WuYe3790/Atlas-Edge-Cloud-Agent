@@ -1419,6 +1419,18 @@ async function loadStatus() {
   }
 }
 
+function cleanMarkdownForPreview(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/#{1,6}\s+/g, "") // Remove headers
+    .replace(/[\-\*\+]\s+/g, "") // Remove lists
+    .replace(/\|/g, " ") // Remove table dividers
+    .replace(/\*\*/g, "") // Remove bold
+    .replace(/`/g, "") // Remove inline code
+    .replace(/\s+/g, " ") // Collapse whitespace
+    .trim();
+}
+
 function renderEdgeTasks(tasks) {
   if (!edgeTasksListEl) return;
   if (!tasks || !tasks.length) {
@@ -1433,10 +1445,18 @@ function renderEdgeTasks(tasks) {
     const countText = Object.keys(counts).length
       ? Object.entries(counts).map(([name, count]) => `${name}:${count}`).join(" / ")
       : `total:${summary.total_count || 0}`;
-    const perfText = inference.fps ? `${inference.fps} FPS` : (inference.latency_ms ? `${inference.latency_ms} ms` : "no perf");
-    const analysisText = task.analysis?.answer
-      ? `<div class="edge-task-analysis">${escapeHtml(task.analysis.answer).slice(0, 140)}${task.analysis.answer.length > 140 ? "..." : ""}</div>`
+    const perfText = inference.fps ? `${inference.fps} FPS` : (inference.latency_ms ? `${inference.latency_ms} ms` : "无性能数据");
+    
+    // Clean markdown tags from agent analysis preview
+    const rawAnalysis = task.analysis?.answer || "";
+    const cleanAnalysis = cleanMarkdownForPreview(rawAnalysis);
+    const analysisText = cleanAnalysis
+      ? `<div class="edge-task-analysis">
+          <div class="analysis-preview-title">云端智能体分析决策：</div>
+          <div class="analysis-preview-body">${escapeHtml(cleanAnalysis).slice(0, 140)}${cleanAnalysis.length > 140 ? "..." : ""}</div>
+         </div>`
       : "";
+      
     const imageUrl = event.annotated_image_url || "";
     const decision = event.edge_decision || {};
     const dispatchReason = decision.reason || "";
@@ -1447,37 +1467,90 @@ function renderEdgeTasks(tasks) {
     if (personCount !== undefined && personCount > 0) factors.push(`人:${personCount}`);
     if (vehicleCount !== undefined && vehicleCount > 0) factors.push(`车:${vehicleCount}`);
     if (inference.conf_thres !== undefined) factors.push(`阈值:${inference.conf_thres}`);
-    if (summary.total_count !== undefined) factors.push(`共:${summary.total_count}`);
+    if (summary.total_count !== undefined) factors.push(`目标数:${summary.total_count}`);
     const factorsHtml = factors.length
       ? `<div class="edge-decision-factors">${factors.map((f) => `<span>${escapeHtml(f)}</span>`).join("")}</div>`
       : "";
-    const cloudChip = needCloud
-      ? '<span class="edge-cloud-chip on">上云</span>'
-      : '<span class="edge-cloud-chip off">本地</span>';
+      
+    // Clarify mode tags so they are not confusing
+    const modeBadge = needCloud
+      ? '<span class="edge-cloud-chip on" title="触发协同调度机制，数据上云运行智能体深度决策">☁️ 边云协同模式 (数据上云)</span>'
+      : '<span class="edge-cloud-chip off" title="目标置信度充足，由边端本地闭环处理，节省网络带宽">💻 边端自闭环模式 (本地处理)</span>';
+      
+    // Pipeline indicators
+    const yoloCompletedClass = "completed";
+    const dispatchCompletedClass = "completed";
+    const agentClass = task.analysis ? "completed" : (needCloud ? "pending" : "skipped");
+    
     return `
       <div class="edge-task-card" data-edge-task-id="${escapeHtml(task.id || "")}">
-        ${imageUrl ? `<img class="edge-task-image" src="${escapeHtml(imageUrl)}" alt="Atlas YOLO annotated result" loading="lazy">` : ""}
+        <div class="edge-task-image-container">
+          <img class="edge-task-image" src="${escapeHtml(imageUrl)}" alt="Atlas YOLO annotated result" loading="lazy" style="${imageUrl ? '' : 'display:none;'}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+          <div class="edge-task-image-fallback" style="${imageUrl ? 'display:none;' : 'display:flex;'}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            <span>无有效标注图</span>
+          </div>
+        </div>
+        
         <div class="edge-task-main">
           <strong>${escapeHtml(task.image_id || event.image_id || "未命名图片")}</strong>
-          <span>${escapeHtml(task.device_id || event.device_id || "unknown-device")}</span>
+          <span>设备: ${escapeHtml(task.device_id || event.device_id || "unknown-device")}</span>
         </div>
+        
         <div class="edge-task-meta">
-          ${cloudChip}
-          <span>${escapeHtml(task.status || "received")}</span>
-          <span>${escapeHtml(countText)}</span>
-          <span>${escapeHtml(perfText)}</span>
-          <span>${task.analysis ? "已分析" : "待分析"}</span>
+          ${modeBadge}
+          <span>${escapeHtml(task.status === 'completed' ? '处理完成' : (task.status || '已接收'))}</span>
         </div>
-        <div class="edge-task-flow">
-          <div><b>边端</b>YOLO 本地推理并生成检测摘要</div>
-          ${factorsHtml}
-          <div><b>调度</b>${escapeHtml(dispatchReason || "检测结果上传云端")}</div>
-          <div><b>云端</b>${task.analysis ? "Agent 已生成场景理解和建议" : "等待 Agent 分析"}</div>
+        
+        <div class="edge-pipeline">
+          <div class="pipeline-step ${yoloCompletedClass}">
+            <div class="step-indicator">
+              <span class="step-dot"></span>
+              <span class="step-line"></span>
+            </div>
+            <div class="step-content">
+              <div class="step-title">1. 边端本地 YOLO 推理</div>
+              <div class="step-desc">
+                检测结果: <strong>${escapeHtml(countText)}</strong> (${escapeHtml(perfText)})
+              </div>
+            </div>
+          </div>
+          
+          <div class="pipeline-step ${dispatchCompletedClass}">
+            <div class="step-indicator">
+              <span class="step-dot"></span>
+              <span class="step-line"></span>
+            </div>
+            <div class="step-content">
+              <div class="step-title">2. 协同调度判定</div>
+              <div class="step-desc">
+                决策: <strong class="${needCloud ? 'text-cloud' : 'text-local'}">${needCloud ? '数据上云分析' : '本地闭环处理'}</strong>
+                ${dispatchReason ? `<div class="step-reason">${escapeHtml(dispatchReason)}</div>` : ''}
+                ${factorsHtml}
+              </div>
+            </div>
+          </div>
+          
+          <div class="pipeline-step ${agentClass}">
+            <div class="step-indicator">
+              <span class="step-dot"></span>
+            </div>
+            <div class="step-content">
+              <div class="step-title">3. 云端智能体决策</div>
+              <div class="step-desc">
+                ${task.analysis 
+                  ? '场景深度理解与推荐策略已生成' 
+                  : (needCloud ? '正在等待云端 Agent 运行决策分析...' : '本地推理置信度充足，无需触发云端 Agent')}
+              </div>
+            </div>
+          </div>
         </div>
+        
         ${analysisText}
+        
         <div class="edge-task-actions">
           <a class="edge-report-link" href="/api/edge/tasks/${encodeURIComponent(task.id || "")}/report" target="_blank" rel="noreferrer">导出报告</a>
-          <button type="button" class="edge-analyze-btn" data-task-id="${escapeHtml(task.id || "")}" ${task.analysis ? "disabled" : ""}>云端分析</button>
+          <button type="button" class="edge-analyze-btn" data-task-id="${escapeHtml(task.id || "")}" ${task.analysis || !needCloud ? "disabled" : ""}>云端分析</button>
         </div>
       </div>
     `;
@@ -1521,11 +1594,13 @@ function renderEdgeDevices(devices) {
     const metrics = device.system_metrics || {};
     const memory = metrics.memory || {};
     const loadavg = metrics.loadavg || {};
+    const npu = metrics.npu || {};
     const perf = device.latest_fps
       ? `${device.latest_fps} FPS`
       : (device.latest_latency_ms ? `${device.latest_latency_ms} ms` : "no perf");
     const memoryText = memory.used_percent !== undefined ? `内存 ${memory.used_percent}%` : "内存未知";
     const loadText = loadavg["1m"] !== undefined ? `负载 ${loadavg["1m"]}` : "负载未知";
+    const npuHtml = npu.utilization_percent !== undefined ? `<span>NPU ${npu.utilization_percent}% (${npu.temperature_c}℃)</span>` : "";
     const pendingCount = device.pending_events || 0;
     const pendingHtml = pendingCount > 0
       ? `<span class="pending-chip">待重传 ${pendingCount}</span>`
@@ -1541,6 +1616,7 @@ function renderEdgeDevices(devices) {
           <span>${escapeHtml(perf)}</span>
           <span>${escapeHtml(memoryText)}</span>
           <span>${escapeHtml(loadText)}</span>
+          ${npuHtml}
           ${pendingHtml}
         </div>
         <div class="edge-device-sub">
@@ -1577,6 +1653,7 @@ const modalBody = document.querySelector("#modalBody");
 const modalCloseBtn = document.querySelector("#modalCloseBtn");
 const modalTaskTitle = document.querySelector("#modalTaskTitle");
 const modalReportLink = document.querySelector("#modalReportLink");
+const modalReportLinkHtml = document.querySelector("#modalReportLinkHtml");
 const modalAnalyzeBtn = document.querySelector("#modalAnalyzeBtn");
 
 let modalCurrentTaskId = "";
@@ -1617,6 +1694,7 @@ function renderEdgeTaskDetail(task) {
 
   modalTaskTitle.textContent = `任务: ${task.image_id || event.image_id || "未命名"}`;
   if (modalReportLink) modalReportLink.href = `/api/edge/tasks/${encodeURIComponent(task.id || "")}/report`;
+  if (modalReportLinkHtml) modalReportLinkHtml.href = `/api/edge/tasks/${encodeURIComponent(task.id || "")}/report/html`;
   if (modalAnalyzeBtn) {
     modalAnalyzeBtn.hidden = !!analysis.answer;
     modalAnalyzeBtn.disabled = false;
@@ -1723,10 +1801,78 @@ function renderEdgeTaskDetail(task) {
 
   // 7. System metrics
   if (Object.keys(systemMetrics).length) {
+    const memory = systemMetrics.memory || {};
+    const loadavg = systemMetrics.loadavg || {};
+    const npu = systemMetrics.npu || {};
+
+    let loadVal = 0;
+    if (typeof loadavg === "string") {
+      loadVal = parseFloat(loadavg.split(" ")[0]) || 0;
+    } else if (loadavg && typeof loadavg === "object") {
+      loadVal = parseFloat(loadavg["1m"]) || 0;
+    }
+    const loadPercent = Math.min(100, Math.round(loadVal * 33));
+
+    let metricsHtml = "";
+
+    // CPU load bar
+    metricsHtml += `
+      <div class="modal-metric-visual-row">
+        <span class="metric-visual-label">系统负载 (1m)</span>
+        <div class="metric-visual-progress-bg">
+          <div class="metric-visual-progress-fill cpu" style="width: ${loadPercent}%"></div>
+        </div>
+        <span class="metric-visual-value">负载: ${loadVal}</span>
+      </div>
+    `;
+
+    // Memory bar
+    if (memory.used_percent !== undefined) {
+      metricsHtml += `
+        <div class="modal-metric-visual-row">
+          <span class="metric-visual-label">内存使用率</span>
+          <div class="metric-visual-progress-bg">
+            <div class="metric-visual-progress-fill memory" style="width: ${memory.used_percent}%"></div>
+          </div>
+          <span class="metric-visual-value">${memory.used_percent}% (${memory.available_mb || 0} MB 可用)</span>
+        </div>
+      `;
+    }
+
+    // NPU metrics if Ascend NPU data is present
+    if (npu.utilization_percent !== undefined) {
+      metricsHtml += `
+        <div class="modal-metric-visual-row">
+          <span class="metric-visual-label">NPU 使用率</span>
+          <div class="metric-visual-progress-bg">
+            <div class="metric-visual-progress-fill npu" style="width: ${npu.utilization_percent}%"></div>
+          </div>
+          <span class="metric-visual-value">${npu.utilization_percent}% (${npu.temperature_c}℃)</span>
+        </div>
+      `;
+    }
+    if (npu.memory_used_percent !== undefined) {
+      metricsHtml += `
+        <div class="modal-metric-visual-row">
+          <span class="metric-visual-label">NPU 显存占用</span>
+          <div class="metric-visual-progress-bg">
+            <div class="metric-visual-progress-fill npu" style="width: ${npu.memory_used_percent}%"></div>
+          </div>
+          <span class="metric-visual-value">${npu.memory_used_percent}% (${npu.memory_used_mb}/${npu.memory_total_mb} MB)</span>
+        </div>
+      `;
+    }
+
     html += `
       <section class="modal-section">
-        <h4 class="modal-section-title">系统指标</h4>
-        <pre class="modal-metrics-json">${escapeHtml(JSON.stringify(systemMetrics, null, 2))}</pre>
+        <h4 class="modal-section-title">系统指标监控</h4>
+        <div class="modal-metrics-dashboard">
+          ${metricsHtml}
+        </div>
+        <details class="modal-metrics-raw">
+          <summary>查看原始 JSON 数据</summary>
+          <pre class="modal-metrics-json">${escapeHtml(JSON.stringify(systemMetrics, null, 2))}</pre>
+        </details>
       </section>
     `;
   }
