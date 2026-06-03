@@ -68,6 +68,18 @@ def init_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_tasks_updated_at ON edge_tasks(updated_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_tasks_device_id ON edge_tasks(device_id)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS edge_devices (
+                device_id TEXT PRIMARY KEY,
+                hostname TEXT,
+                status_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_devices_updated_at ON edge_devices(updated_at)")
 
 
 def make_title(text: str) -> str:
@@ -276,3 +288,54 @@ def _edge_task_from_row(row: sqlite3.Row) -> dict[str, Any]:
     analysis_json = item.pop("analysis_json")
     item["analysis"] = json.loads(analysis_json) if analysis_json else None
     return item
+
+
+def upsert_edge_device(device_id: str, hostname: str = "", status: dict[str, Any] | None = None) -> dict[str, Any]:
+    now = utc_now()
+    status = status or {}
+    status_json = json.dumps(status, ensure_ascii=False)
+    with get_connection() as conn:
+        row = conn.execute("SELECT device_id, created_at FROM edge_devices WHERE device_id = ?", (device_id,)).fetchone()
+        if row:
+            conn.execute(
+                """
+                UPDATE edge_devices
+                SET hostname = ?, status_json = ?, updated_at = ?
+                WHERE device_id = ?
+                """,
+                (hostname, status_json, now, device_id),
+            )
+            created_at = row["created_at"]
+        else:
+            conn.execute(
+                """
+                INSERT INTO edge_devices(device_id, hostname, status_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (device_id, hostname, status_json, now, now),
+            )
+            created_at = now
+    return {
+        "device_id": device_id,
+        "hostname": hostname,
+        "status": status,
+        "created_at": created_at,
+        "updated_at": now,
+    }
+
+
+def list_edge_devices() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT device_id, hostname, status_json, created_at, updated_at
+            FROM edge_devices
+            ORDER BY updated_at DESC
+            """
+        ).fetchall()
+    devices = []
+    for row in rows:
+        item = dict(row)
+        item["status"] = json.loads(item.pop("status_json") or "{}")
+        devices.append(item)
+    return devices

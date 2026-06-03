@@ -43,6 +43,14 @@ python3 atlas_yolo_detect_and_upload.py \
   --force-cloud
 ```
 
+如果只需要保持设备在线，不运行 YOLO：
+
+```bash
+python3 /home/HwHiAiUser/atlas_upload_client.py \
+  --server http://192.168.0.101:5000 \
+  --heartbeat
+```
+
 说明：
 
 - Atlas 本地运行 YOLO；
@@ -63,6 +71,7 @@ python3 atlas_yolo_detect_and_upload.py \
 - 检测摘要；
 - 边端/调度/云端流程；
 - Agent 分析摘要。
+- 导出报告按钮，可下载单次任务 Markdown 报告。
 
 ## 5. 讲解口径
 

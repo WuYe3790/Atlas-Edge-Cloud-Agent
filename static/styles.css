@@ -2440,9 +2440,11 @@ textarea {
 
 .edge-task-actions {
   display: flex;
+  gap: 6px;
   justify-content: flex-end;
 }
 
+.edge-task-actions a,
 .edge-task-actions button {
   min-height: 28px;
   padding: 4px 10px;
@@ -2453,6 +2455,7 @@ textarea {
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
+  text-decoration: none;
 }
 
 .edge-task-actions button:disabled {

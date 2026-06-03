@@ -6,7 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, Response, jsonify, request, send_from_directory
 
 from server.bootstrap import PROJECT_ROOT
 from travel_agent.agent import run_agent_with_trace
@@ -14,9 +14,11 @@ from travel_agent.config import load_llm_config
 from travel_agent.storage import (
     create_edge_task,
     get_edge_task,
+    list_edge_devices,
     list_edge_tasks,
     update_edge_task_analysis,
     update_edge_task_event,
+    upsert_edge_device,
 )
 
 
@@ -31,6 +33,14 @@ def receive_edge_event():
         return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
 
     event = _normalize_edge_event(event)
+    upsert_edge_device(
+        str(event.get("device_id") or "unknown-device"),
+        str(event.get("hostname") or ""),
+        {
+            "source": "edge_event",
+            "system_metrics": event.get("system_metrics") if isinstance(event.get("system_metrics"), dict) else {},
+        },
+    )
     task = create_edge_task(event, status="received")
     event = _save_embedded_artifacts(task["id"], event)
     task = update_edge_task_event(task["id"], event) or task
@@ -43,6 +53,22 @@ def receive_edge_event():
             "message": "Edge event received.",
         }
     )
+
+
+@edge_bp.post("/api/edge/heartbeat")
+def edge_heartbeat():
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
+    device_id = str(payload.get("device_id") or "atlas-200i-dk-a2-01")
+    hostname = str(payload.get("hostname") or "")
+    status = {
+        "source": "heartbeat",
+        "system_metrics": payload.get("system_metrics") if isinstance(payload.get("system_metrics"), dict) else {},
+        "note": payload.get("note") or "",
+    }
+    device = upsert_edge_device(device_id, hostname, status)
+    return jsonify({"ok": True, "device": device})
 
 
 @edge_bp.get("/api/edge/tasks")
@@ -60,13 +86,29 @@ def edge_status():
     tasks = list_edge_tasks(limit=200)
     devices: dict[str, dict[str, Any]] = {}
     now = datetime.now(timezone.utc)
+    for device in list_edge_devices():
+        age_seconds = _age_seconds(str(device.get("updated_at") or ""), now)
+        status = device.get("status") if isinstance(device.get("status"), dict) else {}
+        devices[str(device.get("device_id"))] = {
+            "device_id": device.get("device_id"),
+            "hostname": device.get("hostname") or "",
+            "online": age_seconds is not None and age_seconds <= 300,
+            "age_seconds": age_seconds,
+            "last_seen": device.get("updated_at"),
+            "latest_task_id": "",
+            "latest_image_id": "",
+            "latest_status": status.get("source") or "heartbeat",
+            "latest_fps": None,
+            "latest_latency_ms": None,
+            "system_metrics": status.get("system_metrics") if isinstance(status.get("system_metrics"), dict) else {},
+        }
     for task in tasks:
         event = task.get("event") or {}
         device_id = str(task.get("device_id") or event.get("device_id") or "unknown-device")
-        if device_id in devices:
-            continue
         updated_at = str(task.get("updated_at") or "")
         age_seconds = _age_seconds(updated_at, now)
+        if device_id in devices and devices[device_id].get("last_seen", "") > updated_at:
+            continue
         inference = event.get("inference") if isinstance(event.get("inference"), dict) else {}
         devices[device_id] = {
             "device_id": device_id,
@@ -90,6 +132,19 @@ def edge_task_detail(task_id: str):
     if not task:
         return jsonify({"ok": False, "error": "Task not found"}), 404
     return jsonify({"ok": True, "task": task})
+
+
+@edge_bp.get("/api/edge/tasks/<task_id>/report")
+def edge_task_report(task_id: str):
+    task = get_edge_task(task_id)
+    if not task:
+        return jsonify({"ok": False, "error": "Task not found"}), 404
+    markdown = _build_task_report(task)
+    return Response(
+        markdown,
+        mimetype="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={task_id}-report.md"},
+    )
 
 
 @edge_bp.get("/api/edge/artifacts/<path:filename>")
@@ -213,3 +268,41 @@ def _build_edge_analysis_prompt(task: dict[str, Any]) -> str:
 边端事件 JSON：
 {compact_event}
 """.strip()
+
+
+def _build_task_report(task: dict[str, Any]) -> str:
+    event = task.get("event") or {}
+    inference = event.get("inference") if isinstance(event.get("inference"), dict) else {}
+    summary = event.get("summary") if isinstance(event.get("summary"), dict) else {}
+    counts = summary.get("class_counts") if isinstance(summary.get("class_counts"), dict) else {}
+    detections = event.get("detections") if isinstance(event.get("detections"), list) else []
+    analysis = task.get("analysis") if isinstance(task.get("analysis"), dict) else {}
+    lines = [
+        f"# Atlas 边云协同任务报告",
+        "",
+        f"- 任务 ID: `{task.get('id')}`",
+        f"- 设备 ID: `{task.get('device_id')}`",
+        f"- 图片: `{task.get('image_id')}`",
+        f"- 状态: `{task.get('status')}`",
+        f"- 模型: `{inference.get('model', '')}`",
+        f"- 推理延迟: `{inference.get('latency_ms', '')}` ms",
+        f"- FPS: `{inference.get('fps', '')}`",
+        "",
+        "## 边端检测摘要",
+        "",
+        f"- 总目标数: `{summary.get('total_count', 0)}`",
+        f"- 类别统计: `{json.dumps(counts, ensure_ascii=False)}`",
+        "",
+        "## 检测明细",
+        "",
+    ]
+    if detections:
+        for index, item in enumerate(detections, 1):
+            lines.append(
+                f"{index}. `{item.get('class_name')}` confidence=`{item.get('confidence')}` bbox=`{item.get('bbox')}`"
+            )
+    else:
+        lines.append("- 无检测目标")
+    lines.extend(["", "## 云端 Agent 分析", ""])
+    lines.append(str(analysis.get("answer") or "尚未生成云端分析。"))
+    return "\n".join(lines) + "\n"

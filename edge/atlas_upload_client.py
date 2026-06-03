@@ -105,6 +105,19 @@ def analyze_task(server: str, task_id: str, timeout: int) -> dict[str, Any]:
     return response.json()
 
 
+def send_heartbeat(server: str, args: argparse.Namespace) -> dict[str, Any]:
+    url = server.rstrip("/") + "/api/edge/heartbeat"
+    payload = {
+        "device_id": args.device_id,
+        "hostname": socket.gethostname(),
+        "system_metrics": collect_system_metrics(),
+        "note": args.reason or "manual heartbeat",
+    }
+    response = requests.post(url, json=payload, timeout=args.timeout)
+    response.raise_for_status()
+    return response.json()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Upload Atlas YOLO edge detection results to the laptop cloud service.")
     parser.add_argument("--server", required=True, help="Laptop cloud service base URL, for example http://192.168.0.101:5000")
@@ -121,6 +134,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-cloud", action="store_true", help="Always mark this event as needing cloud analysis")
     parser.add_argument("--analyze", action="store_true", help="Ask cloud agent to analyze the task after upload")
     parser.add_argument("--health", action="store_true", help="Only check /api/health")
+    parser.add_argument("--heartbeat", action="store_true", help="Send device heartbeat to /api/edge/heartbeat")
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--save-event", help="Save outgoing event JSON for debugging")
     return parser.parse_args()
@@ -131,6 +145,10 @@ def main() -> int:
     try:
         if args.health:
             check_health(args.server, args.timeout)
+            return 0
+        if args.heartbeat:
+            result = send_heartbeat(args.server, args)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
 
         event = build_event(args)

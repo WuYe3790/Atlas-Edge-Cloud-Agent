@@ -106,6 +106,25 @@ limit: 默认 30，最大 100
 }
 ```
 
+## POST `/api/edge/heartbeat`
+
+Updates Atlas online status without running YOLO.
+
+Request:
+
+```json
+{
+  "device_id": "atlas-200i-dk-a2-01",
+  "hostname": "davinci-mini",
+  "system_metrics": {
+    "memory": {
+      "used_percent": 35.7
+    }
+  },
+  "note": "manual heartbeat"
+}
+```
+
 ## POST `/api/edge/analyze`
 
 触发云端 Agent 对边端任务进行语义分析。
@@ -128,3 +147,7 @@ limit: 默认 30，最大 100
 ## GET `/api/edge/artifacts/<filename>`
 
 访问边端上传的标注图。
+
+## GET `/api/edge/tasks/<task_id>/report`
+
+导出单个边云任务的 Markdown 报告。

@@ -107,6 +107,14 @@ curl http://192.168.0.101:5000/api/health
 
 The board does not need to ping public Internet addresses if the laptop can call cloud APIs.
 
+Send a heartbeat without running YOLO:
+
+```bash
+python3 /home/HwHiAiUser/atlas_upload_client.py \
+  --server http://192.168.0.101:5000 \
+  --heartbeat
+```
+
 ## Upload Scripts To Atlas
 
 Upload the generic event client:
@@ -216,6 +224,14 @@ Receives Atlas detection events.
 ### `GET /api/edge/tasks`
 
 Lists recent edge tasks.
+
+### `GET /api/edge/status`
+
+Lists Atlas devices and online/resource status.
+
+### `GET /api/edge/tasks/<task_id>/report`
+
+Exports one task as a Markdown report for course documentation.
 
 ### `POST /api/edge/analyze`
 

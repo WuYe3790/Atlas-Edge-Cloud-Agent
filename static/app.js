@@ -1459,6 +1459,7 @@ function renderEdgeTasks(tasks) {
         </div>
         ${analysisText}
         <div class="edge-task-actions">
+          <a class="edge-report-link" href="/api/edge/tasks/${encodeURIComponent(task.id || "")}/report" target="_blank" rel="noreferrer">导出报告</a>
           <button type="button" class="edge-analyze-btn" data-task-id="${escapeHtml(task.id || "")}" ${task.analysis ? "disabled" : ""}>云端分析</button>
         </div>
       </div>
