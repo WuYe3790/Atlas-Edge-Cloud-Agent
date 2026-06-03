@@ -1704,13 +1704,22 @@ function renderEdgeDevicesDashboard(devices, container) {
     return;
   }
   container.innerHTML = devices.map((device) => {
-    const metrics = device.system_metrics || {};
+    let metrics = device.system_metrics || {};
+    
+    const statusClass = device.online ? "online" : "offline";
+    const statusText = device.online ? "在线 (活动中)" : "离线 (休眠)";
+    
+    // Clear metrics if offline to avoid confusion
+    if (!device.online) {
+      metrics = {};
+      device.latest_fps = null;
+      device.latest_latency_ms = null;
+    }
+    
     const memory = metrics.memory || {};
     const loadavg = metrics.loadavg || {};
     const npu = metrics.npu || {};
     
-    const statusClass = device.online ? "online" : "offline";
-    const statusText = device.online ? "在线 (活动中)" : "离线 (休眠)";
     const fpsText = device.latest_fps ? `${device.latest_fps} FPS` : "无数据";
     const latencyText = device.latest_latency_ms ? `${device.latest_latency_ms} ms` : "无数据";
     
