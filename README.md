@@ -231,7 +231,21 @@ Lists Atlas devices and online/resource status.
 
 ### `GET /api/edge/tasks/<task_id>/report`
 
-Exports one task as a Markdown report for course documentation.
+Exports one task as a Markdown report.
+
+### Local Validation
+
+Run the backend validation checks without starting a browser:
+
+```powershell
+C:\Users\BaoXinJie\anaconda3\python.exe scripts\validate_edge_cloud.py
+```
+
+To validate a live laptop cloud service:
+
+```powershell
+C:\Users\BaoXinJie\anaconda3\python.exe scripts\validate_edge_cloud.py --server http://192.168.0.101:5000
+```
 
 ### `POST /api/edge/analyze`
 

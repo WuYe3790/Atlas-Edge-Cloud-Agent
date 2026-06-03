@@ -151,3 +151,54 @@ Request:
 ## GET `/api/edge/tasks/<task_id>/report`
 
 导出单个边云任务的 Markdown 报告。
+
+## GET `/api/edge/tasks/<task_id>/report/html`
+
+导出单个边云任务的 HTML 报告页面。
+
+## POST `/api/edge/scheduling/validate`
+
+验证边云调度决策是否符合当前规则。
+
+请求：
+
+```json
+{
+  "summary": {
+    "total_count": 1,
+    "class_counts": {
+      "person": 1
+    },
+    "person_count": 1,
+    "vehicle_count": 0
+  },
+  "detections": [
+    {
+      "class_name": "person",
+      "confidence": 0.91
+    }
+  ],
+  "system_metrics": {},
+  "force_cloud": false
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "decision": {
+    "handled_locally": false,
+    "need_cloud_analysis": true,
+    "reason": "检测到 1 人，触发云端场景理解与风险评估。"
+  }
+}
+```
+
+## 本地验证脚本
+
+```powershell
+C:\Users\BaoXinJie\anaconda3\python.exe scripts\validate_edge_cloud.py
+C:\Users\BaoXinJie\anaconda3\python.exe scripts\validate_edge_cloud.py --server http://192.168.0.101:5000
+```
