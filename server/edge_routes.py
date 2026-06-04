@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
+import os
+import socket
+import paramiko
 
 from server.bootstrap import PROJECT_ROOT
 from travel_agent.agent import run_agent_with_trace
@@ -872,3 +875,90 @@ def _build_task_report(task: dict[str, Any]) -> str:
         lines.append("")
 
     return "\n".join(lines) + "\n"
+
+
+def _get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+@edge_bp.post("/api/edge/control")
+def edge_control():
+    payload = request.get_json(silent=True) or {}
+    action = payload.get("action")
+    if not action:
+        return jsonify({"ok": False, "error": "缺少 action 参数"}), 400
+
+    board_ip = os.getenv("ATLAS_BOARD_IP", "192.168.0.2").strip()
+    board_user = os.getenv("ATLAS_BOARD_USER", "HwHiAiUser").strip()
+    board_password = os.getenv("ATLAS_BOARD_PASSWORD", "Mind@123").strip()
+
+    # 自动探测局域网 IP
+    server_host = request.host.split(":")[0]
+    if server_host in ("127.0.0.1", "localhost"):
+        server_host = _get_local_ip()
+    server_port = request.host.split(":")[1] if ":" in request.host else "5000"
+    server_url = f"http://{server_host}:{server_port}"
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(
+            hostname=board_ip,
+            username=board_user,
+            password=board_password,
+            timeout=8
+        )
+        
+        if action == "start_heartbeat":
+            kill_cmd = f'pkill -f "atlas_upload_client.py.*--heartbeat"'
+            ssh.exec_command(kill_cmd)
+            
+            cmd = f'nohup python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat --watch --interval 10 > /home/{board_user}/atlas_heartbeat.log 2>&1 &'
+            ssh.exec_command(cmd)
+            return jsonify({"ok": True, "message": "已在板端后台启动定时心跳脚本", "command": cmd})
+            
+        elif action == "stop_heartbeat":
+            cmd = f'pkill -f "atlas_upload_client.py.*--heartbeat"'
+            ssh.exec_command(cmd)
+            return jsonify({"ok": True, "message": "已向板端发送停止心跳命令", "command": cmd})
+            
+        elif action == "trigger_heartbeat":
+            cmd = f'python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat'
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            out_msg = stdout.read().decode('utf-8', errors='ignore')
+            err_msg = stderr.read().decode('utf-8', errors='ignore')
+            return jsonify({
+                "ok": True, 
+                "message": "已执行单次实时心跳上报", 
+                "command": cmd, 
+                "output": out_msg, 
+                "error_output": err_msg
+            })
+            
+        elif action == "run_yolo":
+            cmd = f'cd /home/{board_user}/samples/notebooks/01-yolov5 && python3 atlas_yolo_detect_and_upload.py --image world_cup.jpg --model yolo.om --labels coco_names.txt --server {server_url} --upload --force-cloud'
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            out_msg = stdout.read().decode('utf-8', errors='ignore')
+            err_msg = stderr.read().decode('utf-8', errors='ignore')
+            return jsonify({
+                "ok": True, 
+                "message": "已执行板端 YOLO 推理并上报", 
+                "command": cmd, 
+                "output": out_msg, 
+                "error_output": err_msg
+            })
+            
+        else:
+            return jsonify({"ok": False, "error": "无效的 action 参数"}), 400
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"SSH 远程执行失败: {str(e)}"}), 500
+    finally:
+        ssh.close()
