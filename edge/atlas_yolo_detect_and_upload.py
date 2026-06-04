@@ -194,37 +194,45 @@ def collect_system_metrics() -> dict[str, Any]:
             parsed = False
             for line in stdout.splitlines():
                 if "310B4" in line and "|" in line:
-                    parts = [p.strip() for p in line.split("|")]
-                    if len(parts) >= 8:
-                        try:
-                            npu_info = parts[1].split()
-                            npu_id = int(npu_info[0])
-                            npu_name = npu_info[1]
-                            health = parts[2]
-                            power_temp = parts[3].split()
-                            power = float(power_temp[0])
-                            temp = float(power_temp[1])
-                            aicore_mem = parts[7].split()
-                            aicore = int(aicore_mem[0])
-                            mem_used = int(aicore_mem[1])
-                            mem_total = int(aicore_mem[3])
+                    try:
+                        npu_name_match = re.search(r"\|\s*\d+\s+([A-Za-z0-9\-\_]+)\s*\|", line)
+                        npu_name = npu_name_match.group(1) if npu_name_match else "310B4"
+                        
+                        health_match = re.search(r"\|\s*(OK|Warning|Error|Alarm|NA)\s*\|", line, re.IGNORECASE)
+                        health = health_match.group(1).upper() if health_match else "OK"
+                        
+                        mem_matches = re.findall(r"(\d+)\s+(\d+)\s*/\s*(\d+)", line)
+                        if mem_matches:
+                            last_match = mem_matches[-1]
+                            aicore = int(last_match[0])
+                            mem_used = int(last_match[1])
+                            mem_total = int(last_match[2])
+                        else:
+                            continue
                             
-                            metrics["npu"] = {
-                                "npu_id": npu_id,
-                                "name": npu_name,
-                                "health": health,
-                                "temperature_c": temp,
-                                "power_w": power,
-                                "utilization_percent": aicore,
-                                "memory_used_mb": mem_used,
-                                "memory_total_mb": mem_total,
-                                "memory_used_percent": round(mem_used / mem_total * 100, 1) if mem_total else 0.0,
-                            }
-                            parsed = True
-                            break
-                        except Exception:
-                            pass
+                        pow_temp_match = re.search(r"\|\s*(?:OK|Warning|Error|Alarm|NA)\s*\|\s*([\d\.]+)\s+([\d\.]+)", line, re.IGNORECASE)
+                        if pow_temp_match:
+                            power = float(pow_temp_match.group(1))
+                            temp = float(pow_temp_match.group(2))
+                        else:
+                            power, temp = 0.0, 0.0
                             
+                        metrics["npu"] = {
+                            "npu_id": 0,
+                            "name": npu_name,
+                            "health": health,
+                            "temperature_c": temp,
+                            "power_w": power,
+                            "utilization_percent": aicore,
+                            "memory_used_mb": mem_used,
+                            "memory_total_mb": mem_total,
+                            "memory_used_percent": round(mem_used / mem_total * 100, 1) if mem_total else 0.0,
+                        }
+                        parsed = True
+                        break
+                    except Exception:
+                        pass
+                        
             if not parsed and stdout.strip():
                 metrics["npu"] = {
                     "raw_available": True,
