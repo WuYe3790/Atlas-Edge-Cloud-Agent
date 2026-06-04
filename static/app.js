@@ -1584,11 +1584,11 @@ function renderEdgeTasks(tasks, container) {
         <div class="edge-pipeline">
           <div class="pipeline-step ${yoloCompletedClass}">
             <div class="step-indicator">
-              <span class="step-dot"></span>
+              <span class="step-dot">1</span>
               <span class="step-line"></span>
             </div>
             <div class="step-content">
-              <div class="step-title">1. 边端本地 YOLO 推理</div>
+              <div class="step-title">边端本地 YOLO 推理</div>
               <div class="step-desc">
                 检测结果: <strong>${escapeHtml(countText)}</strong> (${escapeHtml(perfText)})
               </div>
@@ -1597,11 +1597,11 @@ function renderEdgeTasks(tasks, container) {
           
           <div class="pipeline-step ${dispatchCompletedClass}">
             <div class="step-indicator">
-              <span class="step-dot"></span>
+              <span class="step-dot">2</span>
               <span class="step-line"></span>
             </div>
             <div class="step-content">
-              <div class="step-title">2. 协同调度判定</div>
+              <div class="step-title">协同调度判定</div>
               <div class="step-desc">
                 决策: <strong class="${needCloud ? 'text-cloud' : 'text-local'}">${needCloud ? '数据上云分析' : '本地闭环处理'}</strong>
                 ${dispatchReason ? `<div class="step-reason">${escapeHtml(dispatchReason)}</div>` : ''}
@@ -1612,10 +1612,10 @@ function renderEdgeTasks(tasks, container) {
           
           <div class="pipeline-step ${agentClass}">
             <div class="step-indicator">
-              <span class="step-dot"></span>
+              <span class="step-dot">3</span>
             </div>
             <div class="step-content">
-              <div class="step-title">3. 云端智能体决策</div>
+              <div class="step-title">云端智能体决策</div>
               <div class="step-desc">
                 ${task.analysis 
                   ? '场景深度理解与推荐策略已生成' 
@@ -1725,7 +1725,6 @@ function renderEdgeDevicesDashboard(devices, container) {
     const latencyText = device.latest_latency_ms ? `${device.latest_latency_ms} ms` : "无数据";
     
     const memPct = memory.used_percent !== undefined ? memory.used_percent : 0;
-    const memText = memory.used_percent !== undefined ? `${memory.used_percent}% (${memory.available_mb || 0} MB 可用 / 共 ${memory.total_mb || 0} MB)` : "无数据";
     
     let loadVal = 0;
     if (typeof loadavg === "string") {
@@ -1738,11 +1737,12 @@ function renderEdgeDevicesDashboard(devices, container) {
     const npuPct = npu.utilization_percent !== undefined ? npu.utilization_percent : 0;
     const npuTemp = npu.temperature_c !== undefined ? `${npu.temperature_c} ℃` : "无数据";
     const npuMemPct = npu.memory_used_percent !== undefined ? npu.memory_used_percent : 0;
+    
     const npuFallbackHtml = npu.utilization_percent === undefined && npu.memory_used_percent === undefined && (npu.raw_available !== undefined || npu.error)
       ? `
             <div class="device-metric-row" data-tooltip="${escapeHtml(npu.raw_preview || npu.error || "NPU 指标暂未解析")}">
               <div class="metric-row-label">
-                <span>昇腾 NPU 状态 ⓘ</span>
+                <span>🧠 昇腾 NPU 状态 ⓘ</span>
                 <strong>${npu.raw_available ? "已读取，格式待适配" : "无可用数据"}</strong>
               </div>
               <div class="metric-progress-bg">
@@ -1784,8 +1784,8 @@ function renderEdgeDevicesDashboard(devices, container) {
             
             <div class="device-metric-row" data-tooltip="系统平均负载 (Loadavg 1m)：过去1分钟内处于可运行或等待状态的平均任务数。当负载高于CPU核心数时，表示系统出现算力拥堵。">
               <div class="metric-row-label">
-                <span>系统平均负载 (CPU Load 1m) ⓘ</span>
-                <strong>负载: ${loadVal}</strong>
+                <span>📈 系统平均负载 (CPU Load 1m) ⓘ</span>
+                <strong>${loadPercent}% <small style="color:var(--muted); font-weight:400;">(负载: ${loadVal})</small></strong>
               </div>
               <div class="metric-progress-bg">
                 <div class="metric-progress-fill cpu" style="width: ${loadPercent}%"></div>
@@ -1794,8 +1794,8 @@ function renderEdgeDevicesDashboard(devices, container) {
             
             <div class="device-metric-row" data-tooltip="系统内存使用率：边端设备当前使用的物理内存（RAM）比例。可用空间不足可能会导致推理进程被系统强制终止。">
               <div class="metric-row-label">
-                <span>系统内存使用率 (RAM Memory) ⓘ</span>
-                <strong>${memText}</strong>
+                <span>💾 系统内存使用率 (RAM Memory) ⓘ</span>
+                <strong>${memPct}% <small style="color:var(--muted); font-weight:400;">(${memory.available_mb || 0} MB 可用 / 共 ${memory.total_mb || 0} MB)</small></strong>
               </div>
               <div class="metric-progress-bg">
                 <div class="metric-progress-fill memory" style="width: ${memPct}%"></div>
@@ -1805,8 +1805,8 @@ function renderEdgeDevicesDashboard(devices, container) {
             ${npu.utilization_percent !== undefined ? `
             <div class="device-metric-row" data-tooltip="昇腾 NPU 核心利用率：达芬奇架构 AI 核心（AI Core）的计算负载比例。反映了 YOLO 神经网络推理的芯片资源占用。">
               <div class="metric-row-label">
-                <span>昇腾 NPU 核心利用率 ⓘ</span>
-                <strong>使用率: ${npuPct}% (温度: ${npuTemp})</strong>
+                <span>🧠 昇腾 NPU 核心利用率 ⓘ</span>
+                <strong>${npuPct}% <small style="color:var(--muted); font-weight:400;">(温度: ${npuTemp})</small></strong>
               </div>
               <div class="metric-progress-bg">
                 <div class="metric-progress-fill npu" style="width: ${npuPct}%"></div>
@@ -1817,8 +1817,8 @@ function renderEdgeDevicesDashboard(devices, container) {
             ${npu.memory_used_percent !== undefined ? `
             <div class="device-metric-row" data-tooltip="昇腾 NPU 显存使用率：用于存放 YOLO 神经网络模型参数和特征图的专用高速显存空间占用量。">
               <div class="metric-row-label">
-                <span>昇腾 NPU 显存使用率 ⓘ</span>
-                <strong>显存: ${npu.memory_used_percent}% (${npu.memory_used_mb}/${npu.memory_total_mb} MB)</strong>
+                <span>📼 昇腾 NPU 显存使用率 ⓘ</span>
+                <strong>${npuMemPct}% <small style="color:var(--muted); font-weight:400;">(${npu.memory_used_mb || 0}/${npu.memory_total_mb || 0} MB)</small></strong>
               </div>
               <div class="metric-progress-bg">
                 <div class="metric-progress-fill npu" style="width: ${npuMemPct}%"></div>

@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  --bg: #f1f5f9;
+  --bg: #f8fafc;
   --panel: rgba(255, 255, 255, 0.85);
   --panel-solid: #ffffff;
   --text: #0f172a;
@@ -12,8 +12,12 @@
   --accent-soft: #eff6ff;
   --assistant: #ffffff;
   --user: #dbeafe;
-  --shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
-  --small-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+  --shadow: 0 10px 25px -3px rgba(15, 23, 42, 0.05), 0 4px 6px -4px rgba(15, 23, 42, 0.05);
+  --small-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.03), 0 2px 4px -2px rgba(15, 23, 42, 0.03);
+  --success: #10b981;
+  --success-light: #f0fdf4;
+  --warning: #f59e0b;
+  --warning-light: #fffbeb;
 }
 
 * {
@@ -49,6 +53,7 @@ textarea {
   font: inherit;
 }
 
+
 .app-shell {
   position: relative;
   display: grid;
@@ -57,8 +62,8 @@ textarea {
   height: calc(100vh - 32px);
   margin: 16px auto;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  border-radius: 20px;
+  border: 1px solid rgba(241, 245, 249, 0.6);
+  border-radius: 16px;
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(20px);
@@ -278,6 +283,7 @@ textarea {
 
 .conversation-item.active {
   border-color: rgba(59, 130, 246, 0.5);
+  border-left: 4px solid var(--accent);
   background: var(--accent-soft);
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.06);
 }
@@ -310,7 +316,12 @@ textarea {
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
-  transition: all 0.2s ease;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.conversation-item:hover .delete-chat-btn {
+  opacity: 1;
 }
 
 .delete-chat-btn:hover {
@@ -847,17 +858,50 @@ textarea {
 }
 
 .bubble p {
-  margin: 8px 0;
+  margin: 12px 0;
+  line-height: 1.75;
 }
 
-.bubble ul,
+.bubble ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 12px 0;
+}
+
+.bubble ul li {
+  position: relative;
+  padding-left: 18px;
+  margin-bottom: 8px;
+  line-height: 1.8;
+}
+
+.bubble ul li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b82f6;
+  box-shadow: 0 0 5px rgba(59, 130, 246, 0.6);
+}
+
 .bubble ol {
-  margin: 8px 0 10px 22px;
+  margin: 12px 0 12px 22px;
   padding: 0;
 }
 
-.bubble li {
-  margin: 4px 0;
+.bubble ol li {
+  margin-bottom: 6px;
+  line-height: 1.7;
+}
+
+.message.assistant .bubble {
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  padding: 20px 24px;
+  line-height: 1.8;
 }
 
 .bubble blockquote {
@@ -2328,7 +2372,7 @@ textarea {
 .edge-task-card {
   padding: 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 12px;
   background: #ffffff;
 }
 
@@ -2457,22 +2501,30 @@ textarea {
 }
 
 .edge-cloud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-weight: 700;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
 }
 
 .edge-cloud-chip.on {
   background: #fff7ed;
   color: #c2410c;
   border: 1px solid #ffedd5;
+  border-left: 3px solid #f97316;
+  box-shadow: 0 1px 3px rgba(249, 115, 22, 0.05);
 }
 
 .edge-cloud-chip.off {
   background: #f0fdf4;
   color: #15803d;
   border: 1px solid #dcfce7;
+  border-left: 3px solid #22c55e;
+  box-shadow: 0 1px 3px rgba(34, 197, 94, 0.05);
 }
 
 .edge-decision-factors {
@@ -2494,17 +2546,17 @@ textarea {
 /* ---- Edge Task Workflow Pipeline ---- */
 .edge-pipeline {
   display: grid;
-  gap: 12px;
-  padding: 8px 4px;
+  gap: 16px;
+  padding: 16px;
   position: relative;
-  background: #fafbfc;
-  border-radius: 8px;
+  background: #f8fafc;
+  border-radius: 12px;
   border: 1px solid var(--line);
 }
 
 .pipeline-step {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   position: relative;
 }
 
@@ -2512,31 +2564,45 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 14px;
+  width: 20px;
   flex-shrink: 0;
 }
 
 .step-dot {
-  width: 8px;
-  height: 8px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: #cbd5e1;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #cbd5e1;
-  transition: all 0.3s ease;
-  margin-top: 3px;
+  background: #f1f5f9;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
+  margin-top: 1px;
 }
 
 .step-line {
   width: 2px;
   flex: 1;
-  background: #cbd5e1;
-  margin: 4px 0 0 0;
+  background: var(--line);
+  margin: 6px 0 -10px 0;
+}
+
+.pipeline-step:last-child .step-line {
+  display: none;
 }
 
 .pipeline-step.completed .step-dot {
-  background: var(--success);
-  box-shadow: 0 0 0 1px var(--success);
+  background: var(--success-light);
+  border-color: var(--success);
+  color: var(--success);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.35);
 }
 
 .pipeline-step.completed .step-line {
@@ -2544,31 +2610,41 @@ textarea {
 }
 
 .pipeline-step.pending .step-dot {
-  background: var(--warning);
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
-  animation: pulse-step-dot 1.5s infinite;
+  background: var(--warning-light);
+  border-color: var(--warning);
+  color: var(--warning);
+  box-shadow: 0 0 10px rgba(250, 173, 20, 0.25);
+  animation: pulse-step-dot 2s infinite ease-in-out;
 }
 
 @keyframes pulse-step-dot {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.25); }
+  0%, 100% { transform: scale(1); box-shadow: 0 0 4px rgba(250, 173, 20, 0.15); }
+  50% { transform: scale(1.08); box-shadow: 0 0 12px rgba(250, 173, 20, 0.35); }
 }
 
 .pipeline-step.skipped .step-dot {
-  background: #94a3b8;
-  box-shadow: 0 0 0 1px #94a3b8;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #94a3b8;
+  opacity: 0.7;
+}
+
+.pipeline-step.skipped .step-line {
+  background: #e2e8f0;
+  border-style: dashed;
 }
 
 .step-content {
   flex: 1;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .step-title {
   font-weight: 700;
   color: var(--text);
   margin-bottom: 2px;
+  font-size: 13px;
 }
 
 .step-desc {
@@ -3041,6 +3117,7 @@ textarea {
   flex: 1;
   padding: 24px;
   overflow: hidden;
+  align-items: stretch;
 }
 
 .dashboard-column {
@@ -3054,7 +3131,7 @@ textarea {
 }
 
 .dashboard-column.device-column {
-  align-self: start;
+  align-self: stretch;
 }
 
 .dashboard-column-title {
@@ -3132,20 +3209,47 @@ textarea {
 }
 
 .device-status-badge {
-  padding: 2px 8px;
+  padding: 4px 12px;
   border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.3px;
+  transition: all 0.3s ease;
 }
 
 .device-status-badge.online {
-  background: #d1fae5;
-  color: #065f46;
+  background: #e6f4ea;
+  color: #137333;
+  border: 1px solid rgba(19, 115, 51, 0.2);
+  animation: status-breath-online 2s infinite ease-in-out;
 }
 
 .device-status-badge.offline {
-  background: #fee2e2;
-  color: #991b1b;
+  background: #fce8e6;
+  color: #c5221f;
+  border: 1px solid rgba(197, 34, 31, 0.2);
+  animation: status-breath-offline 2s infinite ease-in-out;
+}
+
+@keyframes status-breath-online {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(19, 115, 51, 0.1), inset 0 0 0 1px rgba(19, 115, 51, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(19, 115, 51, 0.3), inset 0 0 0 1px rgba(19, 115, 51, 0.2);
+  }
+}
+
+@keyframes status-breath-offline {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(197, 34, 31, 0.1), inset 0 0 0 1px rgba(197, 34, 31, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(197, 34, 31, 0.3), inset 0 0 0 1px rgba(197, 34, 31, 0.2);
+  }
 }
 
 .device-card-metrics {
@@ -3194,8 +3298,10 @@ textarea {
 }
 
 .device-metric-row {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
 }
 
 .device-metric-row.warning-row {
@@ -3232,7 +3338,7 @@ textarea {
 .metric-progress-bg {
   background: #e2e8f0;
   height: 6px;
-  border-radius: 3px;
+  border-radius: 999px;
   overflow: hidden;
 }
 
@@ -3609,6 +3715,6 @@ textarea {
   opacity: 1;
 }
 
-
-. e d g e - c l o u d - p a n e l [ h i d d e n ]   {   d i s p l a y :   n o n e   ! i m p o r t a n t ;   }  
- 
+.edge-cloud-panel[hidden] {
+  display: none !important;
+}
