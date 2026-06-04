@@ -170,6 +170,9 @@ def collect_system_metrics() -> dict[str, Any]:
             meminfo[key] = int(value.strip().split()[0])
         total = meminfo.get("MemTotal")
         available = meminfo.get("MemAvailable")
+        if available is None:
+            available = meminfo.get("MemFree", 0) + meminfo.get("Buffers", 0) + meminfo.get("Cached", 0)
+            
         if total and available is not None:
             used = total - available
             metrics["memory"] = {
@@ -188,38 +191,45 @@ def collect_system_metrics() -> dict[str, Any]:
         res = subprocess.run(["npu-smi", "info"], capture_output=True, text=True, timeout=2.0)
         if res.returncode == 0:
             stdout = res.stdout
-            match = re.search(r"\|\s*(\d+)\s+([A-Za-z0-9\-\_]+)\s*\|\s*([A-Za-z]+)\s*\|\s*([\d\.]+)\s+([\d\.]+)\s+(\d+)\((\d+)/(\d+)\)\s*\|", stdout)
-            if match:
-                npu_id = int(match.group(1))
-                npu_name = match.group(2)
-                health = match.group(3)
-                temp = float(match.group(4))
-                power = float(match.group(5))
-                mem_percent = float(match.group(6))
-                mem_used = int(match.group(7))
-                mem_total = int(match.group(8))
+            parsed = False
+            for line in stdout.splitlines():
+                if "310B4" in line and "|" in line:
+                    parts = [p.strip() for p in line.split("|")]
+                    if len(parts) >= 8:
+                        try:
+                            npu_info = parts[1].split()
+                            npu_id = int(npu_info[0])
+                            npu_name = npu_info[1]
+                            health = parts[2]
+                            power_temp = parts[3].split()
+                            power = float(power_temp[0])
+                            temp = float(power_temp[1])
+                            aicore_mem = parts[7].split()
+                            aicore = int(aicore_mem[0])
+                            mem_used = int(aicore_mem[1])
+                            mem_total = int(aicore_mem[3])
+                            
+                            metrics["npu"] = {
+                                "npu_id": npu_id,
+                                "name": npu_name,
+                                "health": health,
+                                "temperature_c": temp,
+                                "power_w": power,
+                                "utilization_percent": aicore,
+                                "memory_used_mb": mem_used,
+                                "memory_total_mb": mem_total,
+                                "memory_used_percent": round(mem_used / mem_total * 100, 1) if mem_total else 0.0,
+                            }
+                            parsed = True
+                            break
+                        except Exception:
+                            pass
+                            
+            if not parsed and stdout.strip():
                 metrics["npu"] = {
-                    "npu_id": npu_id,
-                    "name": npu_name,
-                    "health": health,
-                    "temperature_c": temp,
-                    "power_w": power,
-                    "utilization_percent": int(mem_percent),
-                    "memory_used_mb": mem_used,
-                    "memory_total_mb": mem_total,
-                    "memory_used_percent": round(mem_used / mem_total * 100, 1) if mem_total else 0.0,
+                    "raw_available": True,
+                    "raw_preview": "\n".join(stdout.strip().splitlines()[:8]),
                 }
-            else:
-                match_simple = re.search(r"\|\s*(\d+)\s+([A-Za-z0-9\-\_]+)\s*\|\s*([A-Za-z]+)\s*\|\s*([\d\.]+)\s+([\d\.]+)\s+(\d+)\s*\|", stdout)
-                if match_simple:
-                    metrics["npu"] = {
-                        "npu_id": int(match_simple.group(1)),
-                        "name": match_simple.group(2),
-                        "health": match_simple.group(3),
-                        "temperature_c": float(match_simple.group(4)),
-                        "power_w": float(match_simple.group(5)),
-                        "utilization_percent": int(match_simple.group(6)),
-                    }
     except Exception:
         pass
     return metrics
