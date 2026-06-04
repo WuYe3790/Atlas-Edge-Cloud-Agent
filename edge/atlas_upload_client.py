@@ -11,7 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
+import urllib.request
+import urllib.error
+
+class RequestException(Exception):
+    pass
 
 DEFAULT_LOAD_THRESHOLD = 2.0
 
@@ -267,9 +271,13 @@ def build_event(args: argparse.Namespace) -> dict[str, Any]:
 
 def check_health(server: str, timeout: int) -> None:
     url = server.rstrip("/") + "/api/health"
-    response = requests.get(url, timeout=timeout)
-    response.raise_for_status()
-    print(json.dumps(response.json(), ensure_ascii=False, indent=2))
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception as e:
+        raise RequestException(str(e)) from e
 
 
 def post_event(server: str, event: dict[str, Any], timeout: int, max_retries: int = 3) -> dict[str, Any]:
@@ -277,11 +285,16 @@ def post_event(server: str, event: dict[str, Any], timeout: int, max_retries: in
     for attempt in range(1, max_retries + 1):
         try:
             url = server.rstrip("/") + "/api/edge/events"
-            response = requests.post(url, json=event, timeout=timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as exc:
-            last_error = exc
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(event).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            last_error = RequestException(str(exc))
             if attempt < max_retries:
                 delay = 2 ** attempt
                 print(f"[retry] POST failed (attempt {attempt}/{max_retries}), retrying in {delay}s: {exc}", file=sys.stderr)
@@ -328,7 +341,7 @@ def retry_pending_events(server_url: str, timeout: int) -> int:
             path.unlink()
             print(f"[pending] retry success: {path.name} -> task_id={result.get('task_id', '')}")
             success += 1
-        except requests.RequestException as exc:
+        except RequestException as exc:
             print(f"[pending] retry failed: {path.name}: {exc}", file=sys.stderr)
     print(f"[pending] retry complete: {success}/{len(pending)} succeeded")
     return 0 if success == len(pending) else 1
@@ -336,9 +349,17 @@ def retry_pending_events(server_url: str, timeout: int) -> int:
 
 def analyze_task(server: str, task_id: str, timeout: int) -> dict[str, Any]:
     url = server.rstrip("/") + "/api/edge/analyze"
-    response = requests.post(url, json={"task_id": task_id}, timeout=timeout)
-    response.raise_for_status()
-    return response.json()
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"task_id": task_id}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        raise RequestException(str(e)) from e
 
 
 def send_heartbeat(server: str, args: argparse.Namespace) -> dict[str, Any]:
@@ -350,9 +371,17 @@ def send_heartbeat(server: str, args: argparse.Namespace) -> dict[str, Any]:
         "pending_events": len(load_pending_events()),
         "note": args.reason or "manual heartbeat",
     }
-    response = requests.post(url, json=payload, timeout=args.timeout)
-    response.raise_for_status()
-    return response.json()
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=args.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception as e:
+        raise RequestException(str(e)) from e
 
 
 def watch_heartbeat(server: str, args: argparse.Namespace) -> int:
@@ -375,7 +404,7 @@ def watch_heartbeat(server: str, args: argparse.Namespace) -> int:
                 ),
                 flush=True,
             )
-        except requests.RequestException as exc:
+        except RequestException as exc:
             print(f"[heartbeat] failed: {exc}", file=sys.stderr)
         time.sleep(max(1, args.interval))
 

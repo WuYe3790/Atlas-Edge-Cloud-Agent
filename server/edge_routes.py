@@ -902,7 +902,14 @@ def edge_control():
     # 自动探测局域网 IP
     server_host = request.host.split(":")[0]
     if server_host in ("127.0.0.1", "localhost"):
-        server_host = _get_local_ip()
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((board_ip, 22))
+            server_host = s.getsockname()[0]
+            s.close()
+        except Exception:
+            server_host = _get_local_ip()
+            
     server_port = request.host.split(":")[1] if ":" in request.host else "5000"
     server_url = f"http://{server_host}:{server_port}"
 
@@ -916,12 +923,24 @@ def edge_control():
             timeout=8
         )
         
+        # 实时自动同步本地无依赖的心跳脚本到开发板上！
+        try:
+            sftp = ssh.open_sftp()
+            local_client_path = str(PROJECT_ROOT / "edge" / "atlas_upload_client.py")
+            sftp.put(local_client_path, f"/home/{board_user}/atlas_upload_client.py")
+            sftp.close()
+        except Exception as sftp_err:
+            print(f"Warning: Failed to auto-sync atlas_upload_client.py via SFTP: {sftp_err}")
+
         if action == "start_heartbeat":
             kill_cmd = f'pkill -f "atlas_upload_client.py.*--heartbeat"'
             ssh.exec_command(kill_cmd)
             
-            cmd = f'nohup python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat --watch --interval 10 > /home/{board_user}/atlas_heartbeat.log 2>&1 &'
-            ssh.exec_command(cmd)
+            cmd = f'nohup /usr/local/miniconda3/bin/python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat --watch --interval 10 > /home/{board_user}/atlas_heartbeat.log 2>&1 &'
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            stdin.close()
+            stdout.close()
+            stderr.close()
             return jsonify({"ok": True, "message": "已在板端后台启动定时心跳脚本", "command": cmd})
             
         elif action == "stop_heartbeat":
@@ -930,7 +949,7 @@ def edge_control():
             return jsonify({"ok": True, "message": "已向板端发送停止心跳命令", "command": cmd})
             
         elif action == "trigger_heartbeat":
-            cmd = f'python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat'
+            cmd = f'/usr/local/miniconda3/bin/python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat'
             stdin, stdout, stderr = ssh.exec_command(cmd)
             out_msg = stdout.read().decode('utf-8', errors='ignore')
             err_msg = stderr.read().decode('utf-8', errors='ignore')
@@ -943,7 +962,7 @@ def edge_control():
             })
             
         elif action == "run_yolo":
-            cmd = f'cd /home/{board_user}/samples/notebooks/01-yolov5 && python3 atlas_yolo_detect_and_upload.py --image world_cup.jpg --model yolo.om --labels coco_names.txt --server {server_url} --upload --force-cloud'
+            cmd = f'cd /home/{board_user}/samples/notebooks/01-yolov5 && /usr/local/miniconda3/bin/python3 atlas_yolo_detect_and_upload.py --image world_cup.jpg --model yolo.om --labels coco_names.txt --server {server_url} --upload --force-cloud'
             stdin, stdout, stderr = ssh.exec_command(cmd)
             out_msg = stdout.read().decode('utf-8', errors='ignore')
             err_msg = stderr.read().decode('utf-8', errors='ignore')

@@ -210,18 +210,32 @@ export default {
         </div>
 
         <!-- Edge-Cloud Mode - Device Monitor Tab -->
-        <div v-if="activeMode === 'edge'" class="sidebar-tab-content active" style="padding: 16px;">
-          <div class="edge-panel-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-            <h3 style="margin:0; font-size:14px; font-weight:700;">边缘设备运行监控</h3>
-            <button class="refresh-btn" type="button" @click="$emit('refresh-devices')">刷新</button>
+        <div v-if="activeMode === 'edge'" class="sidebar-tab-content active" style="padding: 16px; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+          
+          <!-- Device List Header (Vercel Style) -->
+          <div class="device-list-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); flex-shrink:0;">
+            <span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">
+              设备状态 ({{ devices.filter(d => d.online).length }}/{{ devices.length }})
+            </span>
+            <button class="refresh-btn" type="button" @click="$emit('refresh-devices')" style="display:inline-flex; align-items:center; gap:4px; padding: 4px 8px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-solid); cursor: pointer; color: var(--text); transition: all 0.2s; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+              <span>刷新</span>
+            </button>
           </div>
-          <div class="edge-devices-dashboard-grid" style="display:block; padding: 4px 0;">
-            <div v-if="!devices.length" class="edge-empty">暂无边端设备状态</div>
+
+          <!-- Device status scrollable area -->
+          <div class="edge-devices-dashboard-grid" style="flex: 1; overflow-y: auto; padding-right: 4px; display: block; margin-bottom: 12px;">
+            <div v-if="!devices.length" class="edge-empty" style="text-align: center; padding: 20px;">
+              <p style="margin-bottom: 8px;">暂无边端设备状态</p>
+              <button class="refresh-btn" type="button" @click="$emit('refresh-devices')" style="padding: 4px 10px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-solid); cursor: pointer; color: var(--text);">刷新</button>
+            </div>
             
             <div v-for="device in devices.slice(0, 1)" :key="device.device_id" class="edge-device-detail-view" style="display:flex; flex-direction:column; gap:16px;">
               <div class="device-card-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; padding-bottom:8px; border-bottom:1px solid var(--line);">
                 <div class="device-name-area">
-                  <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--text)">{{ device.device_id }}</h4>
+                  <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--text)">
+                    {{ device.device_id }}
+                  </h4>
                   <span style="font-size:11px; color:var(--muted)">主机: {{ device.hostname }}</span>
                 </div>
                 <span class="device-status-badge" :class="device.online ? 'online' : 'offline'">
@@ -290,7 +304,7 @@ export default {
                     <div class="metric-row-label">
                       <span>🧠 NPU 大页内存 (Hugepages)</span>
                       <strong>
-                        {{ device.system_metrics.npu.memory_used_mb }} / {{ device.system_metrics.npu.memory_total_mb }} 页
+                        {{ device.system_metrics.npu.memory_used_mb / device.system_metrics.npu.memory_total_mb * 100 }}%
                         <small style="color:var(--muted); font-weight:400;">(100% 预留)</small>
                       </strong>
                     </div>
@@ -300,26 +314,26 @@ export default {
                   </div>
                 </div>
               </div>
-              
-              <!-- Board SSH Control Panel -->
-              <div class="board-control-section" style="margin-top:12px; padding-top:16px; border-top:1px solid var(--line);">
-                <h5 style="margin:0 0 10px 0; font-size:12px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:6px;">
-                  <span>🔌 板端 SSH 物理控制</span>
-                </h5>
-                <div class="board-control-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                  <button class="control-btn" type="button" @click="$emit('control-device', 'start_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(59,130,246,0.3); border-radius:6px; background:rgba(59,130,246,0.05); color:var(--accent); cursor:pointer; transition:all 0.2s;">启动后台心跳</button>
-                  <button class="control-btn" type="button" @click="$emit('control-device', 'stop_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(239,68,68,0.3); border-radius:6px; background:rgba(239,68,68,0.05); color:#ef4444; cursor:pointer; transition:all 0.2s;">停止后台心跳</button>
-                  <button class="control-btn" type="button" @click="$emit('control-device', 'trigger_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid var(--line); border-radius:6px; background:var(--panel-solid); color:var(--text); cursor:pointer; grid-column:span 2; transition:all 0.2s;">⚡ 单次即时上报心跳</button>
-                  <button class="control-btn" type="button" @click="$emit('control-device', 'run_yolo')" style="padding:8px; font-size:11px; font-weight:700; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:white; cursor:pointer; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    远程运行 YOLO 推理
-                  </button>
-                </div>
-              </div>
 
               <div class="device-card-footer" style="margin-top:12px; padding-top:8px; border-top:1px solid var(--line); font-size:10px; color:var(--muted);">
                 <span>最近活跃: {{ device.latest_image_id || '无任务' }} · {{ device.age_seconds != null ? device.age_seconds + ' 秒前' : '无记录' }}</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Board SSH Control Panel (Pinned at the bottom!) -->
+          <div class="board-control-section" style="padding-top:16px; border-top:1px solid var(--line); flex-shrink: 0; background: transparent;">
+            <h5 style="margin:0 0 10px 0; font-size:12px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:6px;">
+              <span>🔌 板端 SSH 物理控制</span>
+            </h5>
+            <div class="board-control-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+              <button class="control-btn" type="button" @click="$emit('control-device', 'start_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(59,130,246,0.3); border-radius:6px; background:rgba(59,130,246,0.05); color:var(--accent); cursor:pointer; transition:all 0.2s;">启动后台心跳</button>
+              <button class="control-btn" type="button" @click="$emit('control-device', 'stop_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(239,68,68,0.3); border-radius:6px; background:rgba(239,68,68,0.05); color:#ef4444; cursor:pointer; transition:all 0.2s;">停止后台心跳</button>
+              <button class="control-btn" type="button" @click="$emit('control-device', 'trigger_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid var(--line); border-radius:6px; background:var(--panel-solid); color:var(--text); cursor:pointer; grid-column:span 2; transition:all 0.2s;">⚡ 单次即时上报心跳</button>
+              <button class="control-btn" type="button" @click="$emit('control-device', 'run_yolo')" style="padding:8px; font-size:11px; font-weight:700; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:white; cursor:pointer; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                远程运行 YOLO 推理
+              </button>
             </div>
           </div>
         </div>
