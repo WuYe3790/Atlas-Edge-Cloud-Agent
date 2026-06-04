@@ -18,6 +18,7 @@ const edgeDevicesListEl = document.querySelector("#edgeDevicesDashboardGrid");
 const edgeTasksListEl = document.querySelector("#edgeTasksDashboardGrid");
 const edgeTasksListCompactEl = document.querySelector("#edgeTasksListCompact");
 const refreshEdgeTasksBtn = document.querySelector("#refreshEdgeTasksBtn");
+const manualHeartbeatBtn = document.querySelector("#manualHeartbeatBtn");
 const conversationListEl = document.querySelector("#conversationList");
 const skillsListEl = document.querySelector("#skillsList");
 const newChatBtn = document.querySelector("#newChatBtn");
@@ -1737,6 +1738,19 @@ function renderEdgeDevicesDashboard(devices, container) {
     const npuPct = npu.utilization_percent !== undefined ? npu.utilization_percent : 0;
     const npuTemp = npu.temperature_c !== undefined ? `${npu.temperature_c} ℃` : "无数据";
     const npuMemPct = npu.memory_used_percent !== undefined ? npu.memory_used_percent : 0;
+    const npuFallbackHtml = npu.utilization_percent === undefined && npu.memory_used_percent === undefined && (npu.raw_available !== undefined || npu.error)
+      ? `
+            <div class="device-metric-row" data-tooltip="${escapeHtml(npu.raw_preview || npu.error || "NPU 指标暂未解析")}">
+              <div class="metric-row-label">
+                <span>昇腾 NPU 状态 ⓘ</span>
+                <strong>${npu.raw_available ? "已读取，格式待适配" : "无可用数据"}</strong>
+              </div>
+              <div class="metric-progress-bg">
+                <div class="metric-progress-fill npu" style="width: ${npu.raw_available ? 12 : 0}%"></div>
+              </div>
+            </div>
+        `
+      : "";
     
     const pendingCount = device.pending_events || 0;
     const pendingHtml = pendingCount > 0
@@ -1811,6 +1825,7 @@ function renderEdgeDevicesDashboard(devices, container) {
               </div>
             </div>
             ` : ''}
+            ${npuFallbackHtml}
           </div>
           
           ${pendingHtml}
@@ -1857,6 +1872,50 @@ async function loadEdgeTasks() {
     if (edgeTasksListCompactEl) {
       edgeTasksListCompactEl.innerHTML = '<div class="edge-empty">任务日志读取失败</div>';
     }
+  }
+}
+
+async function sendManualHeartbeat(button) {
+  if (!button) return;
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "发送中...";
+  try {
+    const statusResponse = await fetch("/api/edge/status");
+    const statusData = await statusResponse.json();
+    const firstDevice = Array.isArray(statusData.devices) && statusData.devices.length
+      ? statusData.devices[0]
+      : {};
+    const payload = {
+      device_id: firstDevice.device_id || "atlas-200i-dk-a2-01",
+      hostname: firstDevice.hostname || "dashboard-manual",
+      source: "dashboard_manual",
+      note: "Manual heartbeat sent from dashboard button.",
+      system_metrics: firstDevice.system_metrics || {},
+      pending_events: firstDevice.pending_events || 0,
+    };
+    const response = await fetch("/api/edge/heartbeat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || "心跳发送失败");
+    }
+    button.textContent = "已发送";
+    await loadEdgeTasks();
+    setTimeout(() => {
+      button.textContent = oldText || "发送心跳";
+      button.disabled = false;
+    }, 1200);
+  } catch (err) {
+    console.error("Manual heartbeat failed:", err);
+    button.textContent = "发送失败";
+    setTimeout(() => {
+      button.textContent = oldText || "发送心跳";
+      button.disabled = false;
+    }, 1600);
   }
 }
 
@@ -2745,6 +2804,9 @@ if (refreshEdgeTasksBtn) {
 const refreshEdgeDashboardBtn = document.querySelector("#refreshEdgeDashboardBtn");
 if (refreshEdgeDashboardBtn) {
   refreshEdgeDashboardBtn.addEventListener("click", loadEdgeTasks);
+}
+if (manualHeartbeatBtn) {
+  manualHeartbeatBtn.addEventListener("click", () => sendManualHeartbeat(manualHeartbeatBtn));
 }
 
 

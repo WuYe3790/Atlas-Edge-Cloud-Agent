@@ -63,8 +63,9 @@ def edge_heartbeat():
         return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
     device_id = str(payload.get("device_id") or "atlas-200i-dk-a2-01")
     hostname = str(payload.get("hostname") or "")
+    source = "dashboard_manual_heartbeat" if payload.get("source") == "dashboard_manual" else "heartbeat"
     status = {
-        "source": "heartbeat",
+        "source": source,
         "system_metrics": payload.get("system_metrics") if isinstance(payload.get("system_metrics"), dict) else {},
         "note": payload.get("note") or "",
         "pending_events": payload.get("pending_events", 0) if isinstance(payload.get("pending_events"), int) else 0,

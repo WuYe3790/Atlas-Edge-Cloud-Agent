@@ -359,7 +359,8 @@ def watch_heartbeat(server: str, args: argparse.Namespace) -> int:
                         "time": utc_now(),
                     },
                     ensure_ascii=False,
-                )
+                ),
+                flush=True,
             )
         except requests.RequestException as exc:
             print(f"[heartbeat] failed: {exc}", file=sys.stderr)
