@@ -9,6 +9,7 @@ __pycache__/
 data/*.db
 data/*.db-*
 data/edge_artifacts/
+data/uploads/
 pending_events/
 scratch/
 docs/

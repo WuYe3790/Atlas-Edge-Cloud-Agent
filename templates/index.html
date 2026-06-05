@@ -7,7 +7,24 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;700;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260605-terminal-drawer-fix">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260605-upload-support">
+  <style>
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .spinner-loader {
+      animation: spin 1s linear infinite;
+    }
+    .media-upload-card:hover {
+      background: rgba(255, 255, 255, 0.05) !important;
+      border-color: #38bdf8 !important;
+    }
+    .media-upload-card.dragging {
+      background: rgba(56, 189, 248, 0.1) !important;
+      border-color: #38bdf8 !important;
+      transform: scale(1.005);
+    }
+  </style>
   <script type="importmap">
     {
       "imports": {
@@ -30,6 +47,7 @@
       :devices="devices"
       :system-status="systemStatus"
       :location-status-text="locationStatusText"
+      :yolo-inference-status="yoloInferenceStatus"
       @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
       @new-chat="newChat"
       @select-conversation="selectConversation"
@@ -76,6 +94,9 @@
       @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
       @toggle-terminal="isTerminalOpen = !isTerminalOpen"
       @retry-ssh="retrySSHConnection"
+      @log="(text) => terminalLogs += text"
+      @upload-success="loadEdgeStatus"
+      @run-uploaded-yolo="runUploadedYolo"
     ></edge-monitor>
     
     <!-- Task Detail Modal -->
@@ -107,10 +128,57 @@
         </footer>
       </div>
     </div>
+
+    <!-- Run YOLO Board File Selection Modal -->
+    <div class="modal-overlay" v-if="isRunYoloModalOpen" style="z-index: 2000; display: flex; align-items: center; justify-content: center; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(4px);">
+      <div class="modal-dialog" style="max-width: 550px; width: 90%; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); overflow: hidden;">
+        <header class="modal-header" style="padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="margin: 0; font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+            <span>🔍 选择板端文件运行 YOLO 推理</span>
+          </h3>
+          <button type="button" class="modal-close-btn" @click="isRunYoloModalOpen = false" style="background: none; border: none; font-size: 20px; color: var(--muted); cursor: pointer;">&times;</button>
+        </header>
+        <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-weight: 600; color: var(--muted);">从已扫描板端文件列表中选择：</label>
+            <select v-model="selectedBoardFile" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-solid); color: var(--text); font-size: 13px; outline: none; cursor: pointer;">
+              <option value="">-- 请选择文件 --</option>
+              <option v-for="file in boardFiles" :key="file" :value="file">{{ file }}</option>
+            </select>
+          </div>
+          
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-weight: 600; color: var(--muted);">或手动输入自定义绝对路径：</label>
+            <input type="text" 
+                   v-model="customBoardFile" 
+                   placeholder="例如: /home/HwHiAiUser/samples/notebooks/01-yolov5/world_cup.jpg" 
+                   style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-solid); color: var(--text); font-size: 13px; outline: none;" />
+          </div>
+          
+          <div style="font-size: 11px; color: var(--muted); line-height: 1.4;">
+            * 提示: 视频文件将自动执行板端 6 帧等距抽帧后进行 YOLO 融合时序多模态评估；图片文件则直接进行推理。
+          </div>
+        </div>
+        <footer class="modal-footer" style="padding: 12px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px;">
+          <button type="button" 
+                  @click="isRunYoloModalOpen = false" 
+                  style="padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); font-weight: 600; font-size: 12px; cursor: pointer;">
+            取消
+          </button>
+          <button type="button" 
+                  @click="submitBoardYolo" 
+                  :disabled="runYoloLoading || (!selectedBoardFile && !customBoardFile.trim())" 
+                  style="padding: 8px 20px; border-radius: 6px; border: none; background: var(--accent); color: white; font-weight: 700; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            <span v-if="runYoloLoading" class="spinner-loader" style="width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.2); border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite;"></span>
+            运行推理
+          </button>
+        </footer>
+      </div>
+    </div>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="{{ url_for('static', filename='travel_helpers.js') }}?v=20260605-terminal-drawer-fix"></script>
-  <script type="module" src="{{ url_for('static', filename='app.js') }}?v=20260605-terminal-drawer-fix"></script>
+  <script src="{{ url_for('static', filename='travel_helpers.js') }}?v=20260605-upload-support-v2"></script>
+  <script type="module" src="{{ url_for('static', filename='app.js') }}?v=20260605-upload-support-v2"></script>
 </body>
 </html>

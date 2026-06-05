@@ -1,8 +1,8 @@
 import { createApp, ref, reactive, onMounted, watch, nextTick } from 'vue';
-import SidebarComponent from './components/SidebarComponent.js?v=20260605-terminal-drawer-fix';
-import TravelAssistant from './components/TravelAssistant.js?v=20260605-terminal-drawer-fix';
-import EdgeMonitor from './components/EdgeMonitor.js?v=20260605-terminal-drawer-fix';
-import TaskModal from './components/TaskModal.js?v=20260605-terminal-drawer-fix';
+import SidebarComponent from './components/SidebarComponent.js?v=20260605-upload-support-v2';
+import TravelAssistant from './components/TravelAssistant.js?v=20260605-upload-support-v2';
+import EdgeMonitor from './components/EdgeMonitor.js?v=20260605-upload-support-v2';
+import TaskModal from './components/TaskModal.js?v=20260605-upload-support-v2';
 
 createApp({
   components: {
@@ -79,6 +79,15 @@ createApp({
     const boardConsoleTitle = ref('');
     const boardConsoleLog = ref('');
     const boardConsoleLoading = ref(false);
+
+    // Run YOLO Board File selection state variables
+    const isRunYoloModalOpen = ref(false);
+    const boardFiles = ref([]);
+    const selectedBoardFile = ref('');
+    const customBoardFile = ref('');
+    const runYoloLoading = ref(false);
+    const yoloInferenceStatus = ref('idle');
+
 
     // Slide-out terminal drawer specific state
     const isTerminalOpen = ref(false);
@@ -447,8 +456,29 @@ createApp({
 
         devices.value = statusData.devices || [];
         tasks.value = tasksData.tasks || [];
+        
+        await checkYoloStatus();
       } catch (err) {
         console.error("Failed to load edge status:", err);
+      }
+    };
+
+    const checkYoloStatus = async () => {
+      try {
+        const response = await fetch(`/api/edge/yolo-status?_t=${Date.now()}`);
+        const data = await response.json();
+        if (data.ok) {
+          yoloInferenceStatus.value = data.state;
+        }
+      } catch (err) {
+        console.error("Failed to check yolo status:", err);
+      }
+    };
+
+    const pollYoloStatus = async () => {
+      await checkYoloStatus();
+      if (yoloInferenceStatus.value !== 'idle') {
+        setTimeout(pollYoloStatus, 1000);
       }
     };
 
@@ -482,7 +512,7 @@ createApp({
         const response = await fetch("/api/edge/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ task_id: taskId, thinking_mode: true })
+          body: JSON.stringify({ task_id: taskId, thinking_mode: true, mode: "both" })
         });
         if (response.ok) {
           const data = await response.json();
@@ -527,11 +557,15 @@ createApp({
       activeTaskDetail.value = null;
     };
 
-    const scrollTerminalToBottom = () => {
+    const scrollTerminalToBottom = (force = false) => {
       nextTick(() => {
         const terminalBody = document.querySelector(".terminal-body");
         if (terminalBody) {
-          terminalBody.scrollTop = terminalBody.scrollHeight;
+          const threshold = 80;
+          const isNearBottom = (terminalBody.scrollHeight - terminalBody.scrollTop - terminalBody.clientHeight) <= threshold;
+          if (force || isNearBottom) {
+            terminalBody.scrollTop = terminalBody.scrollHeight;
+          }
         }
       });
     };
@@ -569,8 +603,163 @@ createApp({
       await autoConnectSSH();
     };
 
+    const runDefaultYolo = async () => {
+      terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [默认执行] 执行默认 world_cup.jpg 推理...\n`;
+      terminalLoading.value = true;
+      scrollTerminalToBottom();
+      yoloInferenceStatus.value = 'running_board';
+      pollYoloStatus();
+      try {
+        const response = await fetch("/api/edge/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "run_yolo", file_path: "world_cup.jpg" })
+        });
+        const data = await response.json();
+        terminalLoading.value = false;
+        if (data.ok) {
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [成功] ${data.message}\n`;
+          if (data.output) terminalLogs.value += `\n--- 标准输出 ---\n${data.output}\n`;
+          await loadEdgeStatus();
+        } else {
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] ${data.error || '执行失败'}\n`;
+        }
+      } catch (err) {
+        terminalLoading.value = false;
+        terminalLogs.value += `[${new Date().toLocaleTimeString()}] [网络错误] ${err.message}\n`;
+      } finally {
+        yoloInferenceStatus.value = 'idle';
+        scrollTerminalToBottom();
+      }
+    };
+
+    const submitBoardYolo = async () => {
+      const filePath = customBoardFile.value.trim() || selectedBoardFile.value;
+      if (!filePath) return;
+      
+      isRunYoloModalOpen.value = false;
+      runYoloLoading.value = false;
+      
+      terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [执行操作] 开始对板端文件执行 YOLO 推理: ${filePath}...\n`;
+      terminalLoading.value = true;
+      scrollTerminalToBottom();
+      yoloInferenceStatus.value = 'running_board';
+      pollYoloStatus();
+      
+      try {
+        const response = await fetch("/api/edge/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "run_yolo", file_path: filePath })
+        });
+        const data = await response.json();
+        terminalLoading.value = false;
+        
+        if (data.ok) {
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [成功] ${data.message}\n`;
+          if (data.command) {
+            terminalLogs.value += `执行命令: ${data.command}\n`;
+          }
+          if (data.output) {
+            terminalLogs.value += `\n--- 命令行输出 ---\n${data.output}\n`;
+          }
+          if (data.error_output) {
+            terminalLogs.value += `\n--- 错误输出 ---\n${data.error_output}\n`;
+          }
+          await loadEdgeStatus();
+        } else {
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] ${data.error || '推理失败'}\n`;
+        }
+      } catch (err) {
+        terminalLoading.value = false;
+        terminalLogs.value += `[${new Date().toLocaleTimeString()}] [网络错误] ${err.message || err}\n`;
+      } finally {
+        yoloInferenceStatus.value = 'idle';
+        scrollTerminalToBottom();
+      }
+    };
+
+    const runUploadedYolo = async (filePath) => {
+      terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [执行操作] 开始对上传文件执行 YOLO 推理: ${filePath}...\n`;
+      terminalLoading.value = true;
+      scrollTerminalToBottom(true);
+      yoloInferenceStatus.value = 'running_board';
+      pollYoloStatus();
+      
+      try {
+        const response = await fetch("/api/edge/control", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "run_yolo", file_path: filePath })
+        });
+        const data = await response.json();
+        terminalLoading.value = false;
+        
+        if (data.ok) {
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [成功] ${data.message}\n`;
+          if (data.command) {
+            terminalLogs.value += `执行命令: ${data.command}\n`;
+          }
+          if (data.output) {
+            terminalLogs.value += `\n--- 命令行输出 ---\n${data.output}\n`;
+          }
+          if (data.error_output) {
+            terminalLogs.value += `\n--- 错误输出 ---\n${data.error_output}\n`;
+          }
+          await loadEdgeStatus();
+        } else {
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] 推理失败: ${data.error || '未知错误'}\n`;
+        }
+      } catch (err) {
+        terminalLoading.value = false;
+        terminalLogs.value += `[${new Date().toLocaleTimeString()}] [网络错误] ${err.message || err}\n`;
+      } finally {
+        yoloInferenceStatus.value = 'idle';
+        scrollTerminalToBottom(true);
+      }
+    };
+
     const executeBoardControl = async (action) => {
-      const actionName = action === 'run_yolo' ? '运行 YOLO 推理' : action === 'start_heartbeat' ? '启动后台心跳' : action === 'stop_heartbeat' ? '停止后台心跳' : '即时心跳上报';
+      if (action === 'run_yolo') {
+        terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [获取文件] 正在扫描开发板上的多媒体文件...\n`;
+        terminalLoading.value = true;
+        scrollTerminalToBottom();
+        
+        try {
+          const response = await fetch("/api/edge/board-files");
+          const data = await response.json();
+          terminalLoading.value = false;
+          
+          if (response.ok && data.ok) {
+            boardFiles.value = data.files || [];
+            selectedBoardFile.value = '';
+            customBoardFile.value = '';
+            isRunYoloModalOpen.value = true;
+            terminalLogs.value += `[${new Date().toLocaleTimeString()}] [成功] 获取到 ${boardFiles.value.length} 个板端多媒体文件，已弹出选择窗口。\n`;
+          } else {
+            terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] 获取板端文件列表失败: ${data.error || '未知错误'}\n`;
+            runDefaultYolo();
+          }
+        } catch (err) {
+          terminalLoading.value = false;
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] 无法连接服务器扫描文件: ${err.message || err}\n`;
+          runDefaultYolo();
+        }
+        scrollTerminalToBottom();
+        return;
+      }
+      
+      if (action === 'stop_yolo') {
+        yoloInferenceStatus.value = 'idle';
+      }
+      
+      const actionNames = {
+        'start_heartbeat': '启动后台心跳',
+        'stop_heartbeat': '停止后台心跳',
+        'trigger_heartbeat': '单次即时上报心跳',
+        'stop_yolo': '终止 YOLO 推理与任务流'
+      };
+      const actionName = actionNames[action] || action;
       terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [执行操作] 开始执行: ${actionName}...\n`;
       terminalLoading.value = true;
       scrollTerminalToBottom();
@@ -614,6 +803,12 @@ createApp({
         activeTab.value = 'history';
       } else {
         activeTab.value = 'device';
+      }
+    });
+
+    watch(isTerminalOpen, (newVal) => {
+      if (newVal) {
+        scrollTerminalToBottom(true);
       }
     });
 
@@ -696,6 +891,12 @@ createApp({
       terminalLoading,
       sshStatus,
       sshStatusText,
+      isRunYoloModalOpen,
+      boardFiles,
+      selectedBoardFile,
+      customBoardFile,
+      runYoloLoading,
+      yoloInferenceStatus,
       
       selectConversation,
       deleteConversation,
@@ -710,7 +911,9 @@ createApp({
       openTaskModal,
       closeTaskModal,
       executeBoardControl,
-      retrySSHConnection
+      retrySSHConnection,
+      submitBoardYolo,
+      runUploadedYolo
     };
   }
 }).mount('#appShell');

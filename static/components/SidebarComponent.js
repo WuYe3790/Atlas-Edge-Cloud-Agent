@@ -11,7 +11,8 @@ export default {
     skills: { type: Array, default: () => [] },
     devices: { type: Array, default: () => [] },
     systemStatus: { type: Object, default: () => ({}) },
-    locationStatusText: { type: String, default: '未定位' }
+    locationStatusText: { type: String, default: '未定位' },
+    yoloInferenceStatus: { type: String, default: 'idle' }
   },
   emits: [
     'update:activeMode',
@@ -324,7 +325,23 @@ export default {
               <button class="control-btn" type="button" @click="$emit('control-device', 'start_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(59,130,246,0.3); border-radius:6px; background:rgba(59,130,246,0.05); color:var(--accent); cursor:pointer; transition:all 0.2s;">启动后台心跳</button>
               <button class="control-btn" type="button" @click="$emit('control-device', 'stop_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(239,68,68,0.3); border-radius:6px; background:rgba(239,68,68,0.05); color:#ef4444; cursor:pointer; transition:all 0.2s;">停止后台心跳</button>
               <button class="control-btn" type="button" @click="$emit('control-device', 'trigger_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid var(--line); border-radius:6px; background:var(--panel-solid); color:var(--text); cursor:pointer; grid-column:span 2; transition:all 0.2s;">⚡ 单次即时上报心跳</button>
-              <button class="control-btn" type="button" @click="$emit('control-device', 'run_yolo')" style="padding:8px; font-size:11px; font-weight:700; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:white; cursor:pointer; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px;">
+              <button v-if="yoloInferenceStatus === 'running_board'"
+                      class="control-btn stop-yolo-btn" type="button" 
+                      @click="$emit('control-device', 'stop_yolo')" 
+                      style="padding:8px; font-size:11px; font-weight:700; border:1px solid #ef4444; border-radius:6px; background:#ef4444; color:white; cursor:pointer; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                ⏹️ 终止 YOLO 推理
+              </button>
+              <button v-else-if="yoloInferenceStatus === 'running_cloud'"
+                      class="control-btn" type="button" disabled
+                      style="padding:8px; font-size:11px; font-weight:700; border:1px solid #f59e0b; border-radius:6px; background:#f59e0b; color:white; cursor:not-allowed; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px; opacity:0.9;">
+                <div class="spinner-loader" style="width: 10px; height: 10px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                🧠 云端研判中...
+              </button>
+              <button v-else
+                      class="control-btn" type="button" 
+                      @click="$emit('control-device', 'run_yolo')" 
+                      style="padding:8px; font-size:11px; font-weight:700; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:white; cursor:pointer; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 远程运行 YOLO 推理
               </button>

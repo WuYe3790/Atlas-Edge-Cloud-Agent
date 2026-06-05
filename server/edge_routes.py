@@ -13,6 +13,11 @@ import time
 import paramiko
 
 from server.bootstrap import PROJECT_ROOT
+from server.vision_analyzer import (
+    analyze_with_vision,
+    analyze_video_with_vision,
+    load_vision_config,
+)
 from travel_agent.agent import run_agent_with_trace
 from travel_agent.config import load_llm_config
 from travel_agent.storage import (
@@ -29,6 +34,24 @@ from travel_agent.storage import (
 edge_bp = Blueprint("edge", __name__)
 EDGE_ARTIFACT_DIR = PROJECT_ROOT / "data" / "edge_artifacts"
 DEFAULT_LOAD_THRESHOLD = 2.0
+
+
+import threading
+
+yolo_status_lock = threading.Lock()
+YOLO_STATUS = {
+    "state": "idle",       # "idle", "running_board", "running_cloud"
+    "file_path": None
+}
+
+def set_yolo_status(state: str, file_path: str | None = None):
+    with yolo_status_lock:
+        YOLO_STATUS["state"] = state
+        if file_path is not None:
+            YOLO_STATUS["file_path"] = file_path
+        elif state == "idle":
+            YOLO_STATUS["file_path"] = None
+
 
 
 @edge_bp.after_request
@@ -545,21 +568,161 @@ def analyze_edge_task():
         task = create_edge_task(event, status="received")
         task_id = task["id"]
 
+    mode = str(payload.get("mode") or "both").strip()
+    thinking_mode = bool(payload.get("thinking_mode", True))
+    vision_config = load_vision_config()
+
+    text_result: dict[str, Any] | None = None
+    vision_result: dict[str, Any] | None = None
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
+        if mode in ("text", "both"):
+            futures["text"] = executor.submit(_run_text_analysis, task, thinking_mode)
+        if mode in ("vision", "both") and vision_config.is_available:
+            futures["vision"] = executor.submit(analyze_with_vision, task)
+        elif mode == "vision" and not vision_config.is_available:
+            return jsonify({"ok": False, "error": "VISION_API_KEY 未配置"}), 400
+
+        concurrent.futures.wait(futures.values())
+        
+        if "text" in futures:
+            try:
+                text_result = futures["text"].result()
+            except Exception as exc:
+                text_result = {"answer": "", "trace": [], "model": "", "error": str(exc)}
+        if "vision" in futures:
+            try:
+                vision_result = futures["vision"].result()
+            except Exception as exc:
+                vision_result = {"answer": "", "model": "", "error": str(exc), "media_type": "image"}
+
+    # Merge answers
+    answer_parts: list[str] = []
+    if vision_result and vision_result.get("answer"):
+        answer_parts.append(vision_result["answer"])
+    if text_result and text_result.get("answer"):
+        label = "\n\n---\n\n## 📊 文本推理补充（DeepSeek）\n\n" if vision_result and vision_result.get("answer") else ""
+        answer_parts.append(label + text_result["answer"])
+
+    combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
+
+    analysis = {
+        "answer": combined_answer,
+        "trace": (text_result or {}).get("trace", []),
+        "structured_data": (text_result or {}).get("structured_data"),
+        "mode": mode,
+        "media_type": "image",
+        "frame_count": 1,
+        "text_analysis": text_result,
+        "vision_analysis": vision_result,
+    }
+
+    updated = update_edge_task_analysis(task_id, analysis, status="completed")
+    return jsonify({"ok": True, "task": updated, "analysis": analysis})
+
+
+def _run_text_analysis(task: dict[str, Any], thinking_mode: bool = True) -> dict[str, Any]:
     prompt = _build_edge_analysis_prompt(task)
     config = load_llm_config()
     answer, trace, structured_data = run_agent_with_trace(
         prompt,
         config,
-        thinking_mode=bool(payload.get("thinking_mode", True)),
+        thinking_mode=thinking_mode,
         message_history=[],
         client_context="你正在处理 Atlas 200I DK A2 边端 YOLO 检测结果，请优先给出场景理解、风险等级和调度建议。",
     )
-    analysis = {
+    return {
         "answer": answer,
         "trace": trace,
         "structured_data": structured_data,
+        "model": config.thinking_model if thinking_mode else config.model,
     }
-    updated = update_edge_task_analysis(task_id, analysis, status="completed")
+
+
+@edge_bp.post("/api/edge/analyze/video")
+def analyze_video_task():
+    """对多个帧进行视频级别的多模态场景分析。
+
+    POST /api/edge/analyze/video
+    {
+        "task_ids": ["edge-xxx", "edge-yyy", ...],
+        "mode": "vision" | "both" | "text",
+        "thinking_mode": true  # 仅 text 路径使用
+    }
+    """
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
+
+    task_ids = payload.get("task_ids")
+    if not isinstance(task_ids, list) or len(task_ids) < 2:
+        return jsonify({
+            "ok": False,
+            "error": "task_ids 必须是一个包含至少 2 个 task ID 的数组"
+        }), 400
+
+    mode = str(payload.get("mode") or "both").strip()
+    thinking_mode = bool(payload.get("thinking_mode", True))
+    vision_config = load_vision_config()
+
+    text_result: dict[str, Any] | None = None
+    vision_result: dict[str, Any] | None = None
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
+        if mode in ("text", "both"):
+            first_task = get_edge_task(str(task_ids[0]))
+            if first_task:
+                futures["text"] = executor.submit(_run_text_analysis, first_task, thinking_mode)
+        if mode in ("vision", "both") and vision_config.is_available:
+            futures["vision"] = executor.submit(analyze_video_with_vision, task_ids)
+        elif mode == "vision" and not vision_config.is_available:
+            return jsonify({"ok": False, "error": "VISION_API_KEY 未配置"}), 400
+
+        concurrent.futures.wait(futures.values())
+
+        if "text" in futures:
+            try:
+                text_result = futures["text"].result()
+            except Exception as exc:
+                text_result = {"answer": "", "trace": [], "model": "", "error": str(exc)}
+        if "vision" in futures:
+            try:
+                vision_result = futures["vision"].result()
+            except Exception as exc:
+                vision_result = {
+                    "answer": "", "model": "",
+                    "error": str(exc),
+                    "media_type": "video", "frame_count": 0,
+                }
+
+    # Merge answers
+    answer_parts: list[str] = []
+    if vision_result and vision_result.get("answer"):
+        answer_parts.append(vision_result["answer"])
+    if text_result and text_result.get("answer"):
+        label = "\n\n---\n\n## 📊 文本推理补充（DeepSeek）\n\n" if vision_result and vision_result.get("answer") else ""
+        answer_parts.append(label + text_result["answer"])
+
+    combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
+
+    analysis = {
+        "answer": combined_answer,
+        "trace": (text_result or {}).get("trace", []),
+        "structured_data": (text_result or {}).get("structured_data"),
+        "mode": mode,
+        "media_type": "video",
+        "frame_count": len(task_ids),
+        "frame_task_ids": task_ids,
+        "text_analysis": text_result,
+        "vision_analysis": vision_result,
+    }
+
+    # 将分析结果写回第一帧 task（让前端能通过第一帧找到分析结果）
+    updated = update_edge_task_analysis(str(task_ids[0]), analysis, status="completed")
     return jsonify({"ok": True, "task": updated, "analysis": analysis})
 
 
@@ -1020,6 +1183,17 @@ def edge_control():
             _sout.read()
             return jsonify({"ok": True, "message": "已停止板端心跳进程。"})
 
+        elif action == "stop_yolo":
+            set_yolo_status("idle")
+            _sin, _sout, _serr = ssh.exec_command(
+                "pkill -f 'atlas_yolo_detect_and_upload.py' || true; pkill -f 'extract_frames.py' || true"
+            )
+            _sout.read()
+            return jsonify({
+                "ok": True,
+                "message": "已成功终止开发板上的 YOLO 推理与抽帧任务流程。"
+            })
+
         elif action == "trigger_heartbeat":
             # 显式加载 Ascend 环境变量
             cmd = (
@@ -1039,29 +1213,24 @@ def edge_control():
             })
 
         elif action == "run_yolo":
-            yolo_dir = f"{board_home}/samples/notebooks/01-yolov5"
-            python_bin = "/usr/local/miniconda3/bin/python3"
-
-            # 1. 显式 source set_env.sh 以加载 Ascend 环境变量；
-            # 2. 清除 root 残留的 output 文件，防止覆写权限问题。
-            cmd = (
-                f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
-                f"cd {yolo_dir} && "
-                f"rm -f detections.json summary.json annotated.jpg && "
-                f"{python_bin} -u atlas_yolo_detect_and_upload.py"
-                f" --image world_cup.jpg --model yolo.om --labels coco_names.txt"
-                f" --server {server_url} --upload --force-cloud"
-            )
-
-            stdin, stdout, stderr = ssh.exec_command(cmd)
-            out_msg = stdout.read().decode('utf-8', errors='ignore')
-            err_msg = stderr.read().decode('utf-8', errors='ignore')
+            file_path = payload.get("file_path")
+            if not file_path:
+                file_path = "world_cup.jpg"
+                
+            ext = Path(file_path).suffix.lower()
+            is_video = ext in {".mp4", ".avi", ".mkv", ".mov"}
+            
+            task_result, task_ids, err = _process_media_inference(ssh, file_path, server_url, is_video)
+            if err:
+                return jsonify({"ok": False, "error": err}), 500
+                
             return jsonify({
                 "ok": True,
-                "message": "已执行板端 YOLO 推理并上报",
-                "command": f"cd {yolo_dir} && python3 atlas_yolo_detect_and_upload.py ...",
-                "output": out_msg,
-                "error_output": err_msg
+                "message": f"已执行板端 YOLO 推理并完成云端研判: {file_path}",
+                "command": f"process_media: {file_path} (is_video={is_video})",
+                "output": f"成功生成任务流: {', '.join(task_ids)}",
+                "task": task_result,
+                "task_ids": task_ids
             })
             
         else:
@@ -1104,4 +1273,391 @@ def test_ssh_connection():
             "board_ip": board_ip,
             "board_user": board_user
         }), 500
+
+
+@edge_bp.get("/api/edge/yolo-status")
+def get_yolo_status():
+    with yolo_status_lock:
+        return jsonify({
+            "ok": True,
+            "state": YOLO_STATUS["state"],
+            "file_path": YOLO_STATUS["file_path"]
+        })
+
+
+@edge_bp.get("/api/edge/board-files")
+def list_board_files():
+    board_ip = os.getenv("ATLAS_BOARD_IP", "192.168.0.2").strip()
+    board_user = os.getenv("ATLAS_BOARD_USER", "root").strip()
+    board_password = os.getenv("ATLAS_BOARD_PASSWORD", "Mind@123").strip()
+    board_home = f"/home/{board_user}" if board_user != "root" else "/home/HwHiAiUser"
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(
+            hostname=board_ip,
+            username=board_user,
+            password=board_password,
+            timeout=8
+        )
+        cmd = f"find {board_home} -maxdepth 4 -type f \\( -name \"*.jpg\" -o -name \"*.jpeg\" -o -name \"*.png\" -o -name \"*.webp\" -o -name \"*.mp4\" -o -name \"*.avi\" -o -name \"*.mkv\" -o -name \"*.mov\" \\) 2>/dev/null | sort"
+        stdin, stdout, stderr = ssh.exec_command(cmd)
+        files_list = stdout.read().decode('utf-8', errors='ignore').strip().splitlines()
+        files_list = [f.strip() for f in files_list if f.strip()]
+        return jsonify({
+            "ok": True,
+            "files": files_list
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"获取板端文件列表失败: {str(e)}"}), 500
+    finally:
+        ssh.close()
+
+
+@edge_bp.post("/api/edge/upload")
+def upload_media_file():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "没有文件在请求中"}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"ok": False, "error": "未选择文件"}), 400
+        
+    filename = file.filename
+    ext = Path(filename).suffix.lower()
+    is_image = ext in {".jpg", ".jpeg", ".png", ".webp"}
+    is_video = ext in {".mp4", ".avi", ".mkv", ".mov"}
+    
+    if not (is_image or is_video):
+        return jsonify({"ok": False, "error": f"不支持的文件类型: {ext}"}), 400
+        
+    local_dir = PROJECT_ROOT / "data" / "uploads"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    safe_filename = f"{int(time.time())}_{filename}"
+    local_path = local_dir / safe_filename
+    file.save(str(local_path))
+    
+    board_ip = os.getenv("ATLAS_BOARD_IP", "192.168.0.2").strip()
+    board_user = os.getenv("ATLAS_BOARD_USER", "root").strip()
+    board_password = os.getenv("ATLAS_BOARD_PASSWORD", "Mind@123").strip()
+    board_home = f"/home/{board_user}" if board_user != "root" else "/home/HwHiAiUser"
+    
+    server_host = request.host.split(":")[0]
+    if server_host in ("127.0.0.1", "localhost"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((board_ip, 22))
+            server_host = s.getsockname()[0]
+            s.close()
+        except Exception:
+            server_host = _get_local_ip()
+            
+    server_port = request.host.split(":")[1] if ":" in request.host else "5000"
+    server_url = f"http://{server_host}:{server_port}"
+    
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(
+            hostname=board_ip,
+            username=board_user,
+            password=board_password,
+            timeout=10
+        )
+        
+        sftp = ssh.open_sftp()
+        try:
+            sftp.mkdir(f"{board_home}/uploads")
+        except IOError:
+            pass
+            
+        remote_path = f"{board_home}/uploads/{safe_filename}"
+        sftp.put(str(local_path), remote_path)
+        sftp.close()
+        
+        return jsonify({
+            "ok": True,
+            "message": "已成功上传本地文件至开发板",
+            "file_path": remote_path
+        })
+        
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"上传或推理过程失败: {str(e)}"}), 500
+    finally:
+        ssh.close()
+
+
+# ============================================================
+# 辅助函数：板端推理控制与多模态分析触发
+# ============================================================
+
+EXTRACTOR_SCRIPT_CONTENT = """# -*- coding: utf-8 -*-
+import cv2
+import os
+import sys
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: extract_frames.py <video_path> <out_dir>", file=sys.stderr)
+        sys.exit(1)
+    video_path = sys.argv[1]
+    out_dir = sys.argv[2]
+    os.makedirs(out_dir, exist_ok=True)
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print("Error: Could not open video " + video_path, file=sys.stderr)
+        sys.exit(2)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames <= 0:
+        print("Error: Video has 0 frames or invalid frame count", file=sys.stderr)
+        sys.exit(3)
+    
+    if total_frames >= 6:
+        indices = [int(i * (total_frames - 1) / 5) for i in range(6)]
+    else:
+        indices = list(range(total_frames))
+    
+    indices = sorted(list(set(indices)))
+    
+    frame_idx = 0
+    saved_paths = []
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if frame_idx in indices:
+            out_path = os.path.join(out_dir, "frame_{:06d}.jpg".format(frame_idx))
+            cv2.imwrite(out_path, frame)
+            saved_paths.append(out_path)
+        frame_idx += 1
+    cap.release()
+    print("SUCCESS:" + ",".join(saved_paths))
+
+if __name__ == '__main__':
+    main()
+"""
+
+import re
+
+def _extract_task_id(stdout_str: str) -> str | None:
+    match = re.search(r'"task_id"\s*:\s*"([^"]+)"', stdout_str)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _trigger_image_analysis(task_id: str, mode: str = "both", thinking_mode: bool = True) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    task = get_edge_task(task_id)
+    if not task:
+        return None, None
+        
+    vision_config = load_vision_config()
+    text_result = None
+    vision_result = None
+    
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
+        if mode in ("text", "both"):
+            futures["text"] = executor.submit(_run_text_analysis, task, thinking_mode)
+        if mode in ("vision", "both") and vision_config.is_available:
+            futures["vision"] = executor.submit(analyze_with_vision, task)
+            
+        concurrent.futures.wait(futures.values())
+        
+        if "text" in futures:
+            try:
+                text_result = futures["text"].result()
+            except Exception as exc:
+                text_result = {"answer": "", "trace": [], "model": "", "error": str(exc)}
+        if "vision" in futures:
+            try:
+                vision_result = futures["vision"].result()
+            except Exception as exc:
+                vision_result = {"answer": "", "model": "", "error": str(exc), "media_type": "image"}
+                
+    answer_parts = []
+    if vision_result and vision_result.get("answer"):
+        answer_parts.append(vision_result["answer"])
+    if text_result and text_result.get("answer"):
+        label = "\n\n---\n\n## 📊 文本推理补充（DeepSeek）\n\n" if vision_result and vision_result.get("answer") else ""
+        answer_parts.append(label + text_result["answer"])
+        
+    combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
+    
+    analysis = {
+        "answer": combined_answer,
+        "trace": (text_result or {}).get("trace", []),
+        "structured_data": (text_result or {}).get("structured_data"),
+        "mode": mode,
+        "media_type": "image",
+        "frame_count": 1,
+        "text_analysis": text_result,
+        "vision_analysis": vision_result,
+    }
+    
+    updated = update_edge_task_analysis(task_id, analysis, status="completed")
+    return updated, analysis
+
+
+def _trigger_video_analysis(task_ids: list[str], mode: str = "both", thinking_mode: bool = True) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    vision_config = load_vision_config()
+    text_result = None
+    vision_result = None
+    
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
+        if mode in ("text", "both"):
+            first_task = get_edge_task(str(task_ids[0]))
+            if first_task:
+                futures["text"] = executor.submit(_run_text_analysis, first_task, thinking_mode)
+        if mode in ("vision", "both") and vision_config.is_available:
+            futures["vision"] = executor.submit(analyze_video_with_vision, task_ids)
+            
+        concurrent.futures.wait(futures.values())
+        
+        if "text" in futures:
+            try:
+                text_result = futures["text"].result()
+            except Exception as exc:
+                text_result = {"answer": "", "trace": [], "model": "", "error": str(exc)}
+        if "vision" in futures:
+            try:
+                vision_result = futures["vision"].result()
+            except Exception as exc:
+                vision_result = {
+                    "answer": "", "model": "",
+                    "error": str(exc),
+                    "media_type": "video", "frame_count": 0,
+                }
+                
+    answer_parts = []
+    if vision_result and vision_result.get("answer"):
+        answer_parts.append(vision_result["answer"])
+    if text_result and text_result.get("answer"):
+        label = "\n\n---\n\n## 📊 文本推理补充（DeepSeek）\n\n" if vision_result and vision_result.get("answer") else ""
+        answer_parts.append(label + text_result["answer"])
+        
+    combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
+    
+    analysis = {
+        "answer": combined_answer,
+        "trace": (text_result or {}).get("trace", []),
+        "structured_data": (text_result or {}).get("structured_data"),
+        "mode": mode,
+        "media_type": "video",
+        "frame_count": len(task_ids),
+        "frame_task_ids": task_ids,
+        "text_analysis": text_result,
+        "vision_analysis": vision_result,
+    }
+    
+    updated = update_edge_task_analysis(str(task_ids[0]), analysis, status="completed")
+    return updated, analysis
+
+
+def _process_media_inference(ssh, file_path_on_board, server_url, is_video):
+    set_yolo_status("running_board", file_path_on_board)
+    try:
+        board_user = os.getenv("ATLAS_BOARD_USER", "root").strip()
+        board_home = f"/home/{board_user}" if board_user != "root" else "/home/HwHiAiUser"
+        yolo_dir = f"{board_home}/samples/notebooks/01-yolov5"
+        python_bin = "/usr/local/miniconda3/bin/python3"
+
+        if is_video:
+            import time
+            timestamp = int(time.time() * 1000)
+            frames_dir = f"{board_home}/uploads/video_{timestamp}_frames"
+            
+            ssh.exec_command(f"mkdir -p {board_home}/uploads")
+            
+            sftp = ssh.open_sftp()
+            extractor_local_temp = PROJECT_ROOT / "data" / "uploads" / "extract_frames_temp.py"
+            extractor_local_temp.parent.mkdir(parents=True, exist_ok=True)
+            with open(extractor_local_temp, "w", encoding="utf-8") as f:
+                f.write(EXTRACTOR_SCRIPT_CONTENT)
+            sftp.put(str(extractor_local_temp), f"{board_home}/uploads/extract_frames.py")
+            sftp.close()
+            
+            with yolo_status_lock:
+                if YOLO_STATUS["state"] == "idle":
+                    return None, [], "YOLO 推理已终止。"
+                    
+            cmd = f"{python_bin} {board_home}/uploads/extract_frames.py '{file_path_on_board}' '{frames_dir}'"
+            stdin, stdout, stderr = ssh.exec_command(cmd)
+            out_msg = stdout.read().decode('utf-8', errors='ignore')
+            err_msg = stderr.read().decode('utf-8', errors='ignore')
+            
+            if "SUCCESS:" not in out_msg:
+                return None, [], f"板端视频抽帧失败: {err_msg or out_msg}"
+                
+            frame_paths = out_msg.strip().split("SUCCESS:")[1].split(",")
+            frame_paths = [p.strip() for p in frame_paths if p.strip()]
+            if not frame_paths:
+                return None, [], "视频未抽取出任何有效帧"
+                
+            task_ids = []
+            for idx, frame_path in enumerate(frame_paths):
+                with yolo_status_lock:
+                    if YOLO_STATUS["state"] == "idle":
+                        return None, task_ids, "YOLO 推理已终止。"
+                        
+                run_cmd = (
+                    f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
+                    f"cd {yolo_dir} && "
+                    f"rm -f detections.json summary.json annotated.jpg && "
+                    f"{python_bin} -u atlas_yolo_detect_and_upload.py"
+                    f" --image '{frame_path}' --model yolo.om --labels coco_names.txt"
+                    f" --server {server_url} --upload --no-analyze --force-cloud"
+                )
+                stdin, stdout, stderr = ssh.exec_command(run_cmd)
+                out_run = stdout.read().decode('utf-8', errors='ignore')
+                err_run = stderr.read().decode('utf-8', errors='ignore')
+                
+                tid = _extract_task_id(out_run)
+                if not tid:
+                    return None, task_ids, f"运行第 {idx+1} 帧 YOLO 推理失败，未获取到 task_id。输出:\n{out_run}\n错误:\n{err_run}"
+                task_ids.append(tid)
+                
+            set_yolo_status("running_cloud")
+            
+            with yolo_status_lock:
+                if YOLO_STATUS["state"] == "idle":
+                    return None, task_ids, "YOLO 推理已终止。"
+                    
+            updated_task, _ = _trigger_video_analysis(task_ids)
+            return updated_task, task_ids, None
+        else:
+            with yolo_status_lock:
+                if YOLO_STATUS["state"] == "idle":
+                    return None, [], "YOLO 推理已终止。"
+                    
+            run_cmd = (
+                f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
+                f"cd {yolo_dir} && "
+                f"rm -f detections.json summary.json annotated.jpg && "
+                f"{python_bin} -u atlas_yolo_detect_and_upload.py"
+                f" --image '{file_path_on_board}' --model yolo.om --labels coco_names.txt"
+                f" --server {server_url} --upload --no-analyze --force-cloud"
+            )
+            stdin, stdout, stderr = ssh.exec_command(run_cmd)
+            out_run = stdout.read().decode('utf-8', errors='ignore')
+            err_run = stderr.read().decode('utf-8', errors='ignore')
+            
+            tid = _extract_task_id(out_run)
+            if not tid:
+                return None, [], f"运行板端 YOLO 推理失败，未获取到 task_id。输出:\n{out_run}\n错误:\n{err_run}"
+                
+            set_yolo_status("running_cloud")
+            
+            with yolo_status_lock:
+                if YOLO_STATUS["state"] == "idle":
+                    return None, [tid], "YOLO 推理已终止。"
+                    
+            updated_task, _ = _trigger_image_analysis(tid)
+            return updated_task, [tid], None
+    finally:
+        set_yolo_status("idle")
+
 

@@ -11,10 +11,13 @@ export default {
     sshStatus: { type: String, default: 'disconnected' },
     sshStatusText: { type: String, default: '未连接' }
   },
-  emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh'],
+  emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh', 'upload-success', 'log', 'run-uploaded-yolo'],
   data() {
     return {
-      expandedTaskId: null
+      expandedTaskId: null,
+      isDragging: false,
+      uploading: false,
+      isUploadPanelOpen: false
     };
   },
   updated() {
@@ -22,7 +25,11 @@ export default {
       this.$nextTick(() => {
         const terminalBody = this.$refs.terminalBody;
         if (terminalBody) {
-          terminalBody.scrollTop = terminalBody.scrollHeight;
+          const threshold = 80;
+          const isNearBottom = (terminalBody.scrollHeight - terminalBody.scrollTop - terminalBody.clientHeight) <= threshold;
+          if (isNearBottom) {
+            terminalBody.scrollTop = terminalBody.scrollHeight;
+          }
         }
       });
     }
@@ -55,7 +62,7 @@ export default {
         else if (answer.includes("中风险")) riskLevel = "中风险";
         
         let semantics = "";
-        const semMatch = answer.match(/(?:场景理解|场景语义分析|图像语义|场景分析)[:：\s]*\n*([^#\n]+)/);
+        const semMatch = answer.match(/(?:场景理解|场景语义分析|图像语义|场景分析|场景视觉分析)[:：\s]*\n*([^#\n]+)/);
         if (semMatch) semantics = semMatch[1].trim();
         else {
           const firstLine = answer.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.includes('风险'));
@@ -90,20 +97,114 @@ export default {
       } catch (err) {
         return null;
       }
+    },
+    triggerFileInput() {
+      this.$refs.fileInput.click();
+    },
+    onFileSelected(e) {
+      const files = e.target.files;
+      if (files.length) {
+        this.uploadFile(files[0]);
+      }
+    },
+    onFileDrop(e) {
+      this.isDragging = false;
+      const files = e.dataTransfer.files;
+      if (files.length) {
+        this.uploadFile(files[0]);
+      }
+    },
+    async uploadFile(file) {
+      this.uploading = true;
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      this.$emit('log', `\n[${new Date().toLocaleTimeString()}] [文件上传] 正在读取并准备传输 ${file.name} (大小: ${(file.size/1024/1024).toFixed(2)} MB)...\n`);
+      
+      try {
+        const response = await fetch('/api/edge/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await response.json();
+        this.uploading = false;
+        
+        if (data.ok) {
+          this.$emit('log', `[${new Date().toLocaleTimeString()}] [成功] ${data.message} | 板端路径: ${data.file_path}\n`);
+          const runNow = confirm(`本地媒体文件上传成功！\n板端路径: ${data.file_path}\n\n是否立即对该文件运行板端 YOLO 推理与云端多模态分析？`);
+          if (runNow) {
+            this.$emit('log', `[${new Date().toLocaleTimeString()}] [自动推理] 用户确认立即执行推理任务...\n`);
+            this.$emit('run-uploaded-yolo', data.file_path);
+          } else {
+            this.$emit('log', `[${new Date().toLocaleTimeString()}] [提示] 用户选择暂不执行推理。您可以日后通过物理控制面板选择此文件运行。\n`);
+            alert("文件已上传成功！你可以随时通过物理控制面板中的'远程运行 YOLO 推理'选择此文件运行。");
+          }
+          this.$emit('upload-success');
+        } else {
+          this.$emit('log', `[${new Date().toLocaleTimeString()}] [错误] 文件上传失败: ${data.error || '传输失败'}\n`);
+          alert(`文件上传失败: ${data.error || '未知错误'}`);
+        }
+      } catch (err) {
+        this.uploading = false;
+        this.$emit('log', `[${new Date().toLocaleTimeString()}] [网络错误] 文件上传异常: ${err.message || err}\n`);
+        alert(`网络异常: ${err.message || err}`);
+      }
     }
   },
   template: `
     <section class="edge-cloud-panel" style="display: flex; flex-direction: column; position: relative; overflow: hidden;">
-      <header class="chat-header">
+      <header class="chat-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
         <div class="chat-header-title-area">
           <button v-if="sidebarCollapsed" class="sidebar-toggle-btn expand-btn" type="button" title="展开侧边栏" @click="$emit('toggle-sidebar')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           </button>
           <h2>昇腾边云协同控制中心 (Ascend Edge-Cloud Monitor Console)</h2>
         </div>
+        <button class="upload-toggle-btn" @click="isUploadPanelOpen = !isUploadPanelOpen" style="margin-right: 20px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--panel-solid); color: var(--text); display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+          {{ isUploadPanelOpen ? '收起上传面板' : '上传本地文件' }}
+        </button>
       </header>
       
       <div class="dashboard-container edge-full-tasks-layout" style="padding: 20px; flex: 1; overflow: hidden; display: flex; flex-direction: column;">
+        <!-- Local Media File Drag & Drop Upload Zone -->
+        <div v-if="isUploadPanelOpen" class="media-upload-card" 
+             :class="{ dragging: isDragging }"
+             @dragover.prevent="isDragging = true"
+             @dragleave.prevent="isDragging = false"
+             @drop.prevent="onFileDrop"
+             style="margin-bottom: 20px; padding: 24px; border: 2px dashed var(--line); border-radius: 12px; background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px); transition: all 0.3s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; cursor: pointer; position: relative;">
+          
+          <input type="file" 
+                 ref="fileInput" 
+                 @change="onFileSelected" 
+                 accept=".jpg,.jpeg,.png,.webp,.mp4,.avi,.mkv,.mov" 
+                 style="display: none;" />
+                 
+          <!-- Loading Mask -->
+          <div v-if="uploading" 
+               class="upload-loading-overlay" 
+               style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 10px; z-index: 10;">
+            <div class="spinner-loader" style="width: 40px; height: 40px; border: 4px solid rgba(56, 189, 248, 0.1); border-top-color: #38bdf8; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 12px;"></div>
+            <div style="color: #38bdf8; font-weight: 600; font-size: 14px;">正在上传媒体文件并执行板端 YOLO 推理...</div>
+            <div style="color: var(--muted); font-size: 12px; margin-top: 4px;">视频文件需要抽帧，可能耗时稍长，请稍候...</div>
+          </div>
+          
+          <div @click="triggerFileInput" style="display: flex; flex-direction: column; align-items: center; width: 100%;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 12px;">
+              <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/>
+              <path d="M12 12v9"/>
+              <path d="m16 16-4-4-4 4"/>
+            </svg>
+            <div style="font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px;">
+              拖拽图片/视频到此处，或 <span style="color: #38bdf8; text-decoration: underline;">点击浏览</span>
+            </div>
+            <div style="font-size: 12px; color: var(--muted);">
+              支持 JPG, JPEG, PNG, WEBP, MP4, AVI, MKV, MOV 格式
+            </div>
+          </div>
+        </div>
+
         <!-- Tasks Grid (Occupies full 100% width) -->
         <div class="dashboard-column task-column full-width" style="flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;">
           <h3 class="dashboard-column-title" style="display:flex; align-items:center; gap:8px;">
