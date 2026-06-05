@@ -20,7 +20,6 @@ export default {
     'new-chat',
     'select-conversation',
     'delete-conversation',
-    'refresh-devices',
     'manual-heartbeat',
     'use-skill',
     'control-device'
@@ -217,17 +216,12 @@ export default {
             <span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">
               设备状态 ({{ devices.filter(d => d.online).length }}/{{ devices.length }})
             </span>
-            <button class="refresh-btn" type="button" @click="$emit('refresh-devices')" style="display:inline-flex; align-items:center; gap:4px; padding: 4px 8px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-solid); cursor: pointer; color: var(--text); transition: all 0.2s; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
-              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
-              <span>刷新</span>
-            </button>
           </div>
 
           <!-- Device status scrollable area -->
           <div class="edge-devices-dashboard-grid" style="flex: 1; overflow-y: auto; padding-right: 4px; display: block; margin-bottom: 12px;">
             <div v-if="!devices.length" class="edge-empty" style="text-align: center; padding: 20px;">
               <p style="margin-bottom: 8px;">暂无边端设备状态</p>
-              <button class="refresh-btn" type="button" @click="$emit('refresh-devices')" style="padding: 4px 10px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-solid); cursor: pointer; color: var(--text);">刷新</button>
             </div>
             
             <div v-for="device in devices.slice(0, 1)" :key="device.device_id" class="edge-device-detail-view" style="display:flex; flex-direction:column; gap:16px;">

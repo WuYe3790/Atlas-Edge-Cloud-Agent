@@ -1,111 +1,223 @@
-# SenseNova 多模态视觉分析模块 — 详细实施计划
+# SenseNova 多模态视觉分析模块 — 实施计划（修订版）
 
-## 一、背景调研结论
+## 零、执行前必读：当前项目实际架构
 
-### 1.1 当前"云端分析"的真实流程
+> **注意**：以下所有文件路径和行号基于 **Gemini 接手后的最新代码**（截至 commit `67751c7`）。旧计划中引用的大量行号（如 `app.js:1422`）和函数名（如 `renderEdgeTasks()`）已经过时——前端已被 Vue 3 彻底重写。
+
+### 实际文件结构
 
 ```
-Atlas YOLO 推理
-  → detection JSON + annotated.jpg (标注图保存到 data/edge_artifacts/)
+server/
+  edge_routes.py          # 边云路由，analyze_edge_task() 在行 535-563
+  vision_analyzer.py      # 【新建】多模态分析模块
+
+edge/
+  atlas_yolo_detect_and_upload.py  # YOLO + camera + NPU + 上传
+  atlas_upload_client.py           # 手工上传 + watch 心跳
+
+src/travel_agent/
+  agent.py                # LangChain Agent：build_agent(), run_agent_with_trace()
+  config.py               # LLMConfig dataclass + load_llm_config()
+  storage.py              # SQLite：create_edge_task, update_edge_task_analysis …
+  prompts.py              # System prompt
+
+static/
+  app.js                  # Vue 3 入口，setup() 管所有状态
+  components/
+    SidebarComponent.js   # 侧栏：双模式切换 + 设备监控 + SSH 控制
+    EdgeMonitor.js        # 边云任务管道卡片 + Agent 分析卡片
+    TaskModal.js          # 任务详情弹窗：标注图、检测表、分析全文
+    TravelAssistant.js    # 出行对话面板
+  travel_helpers.js      # 地图/POI/酒店等辅助（从旧 app.js 提取）
+  map_helpers.js         # 高德交互式地图
+
+.env.example             # 配置模板
+
+templates/
+  index.html             # Vue 3 挂载点
+```
+
+### 实际 `POST /api/edge/analyze` 调用链路
+
+```
+EdgeMonitor 卡片按钮 → $emit('run-analysis', taskId)
+TaskModal 底栏按钮    → $emit('run-analysis', taskId)
+                    ↓
+         app.js:481  runAnalysis(taskId)
+                    ↓
+         fetch POST /api/edge/analyze {task_id, thinking_mode: true}
+                    ↓
+         server/edge_routes.py:535  analyze_edge_task()
+                    ↓
+         _build_edge_analysis_prompt(task) → 纯文本 prompt
+         run_agent_with_trace(prompt, config, …) → DeepSeek API
+                    ↓
+         update_edge_task_analysis(task_id, {answer, trace, structured_data})
+                    ↓
+         前端 EdgeMonitor 的 parseAgentAnalysis(answer) 解析风险等级/语义/建议
+```
+
+### 旧计划中的过时引用清单
+
+| 旧计划写的 | 实际对应位置 |
+|---|---|
+| `app.js` 第 1422 行 `renderEdgeTasks()` | **不存在**。已改为 Vue 3 `EdgeMonitor.js` 模板 |
+| `app.js` 第 1468-1471 行按钮事件 | **不存在**。按钮在 `EdgeMonitor.js:256` |
+| `app.js` 中的 `escapeHtml()` | 在 `map_helpers.js:3` 和 `TaskModal.js:14` 各有一份 |
+| `templates/index.html` 中的静态 DOM | 已改为 Vue 模板语法（`v-if` / `v-for` / `@click`） |
+
+---
+
+## 一、前置调研结论
+
+### 1.1 当前"云端分析"的实现（确认不变）
+
+```
+Atlas YOLO 推理 → detection JSON + annotated.jpg
+  → POST /api/edge/events → DB
   → POST /api/edge/analyze
-  → _build_edge_analysis_prompt(): 把 YOLO 检测标签拼成文本 prompt
-  → DeepSeek API（纯文本模型）: 基于标签文字推理"检测到2人和1个球→可能是足球比赛"
-  → 标注图从未发送给任何 LLM
+  → _build_edge_analysis_prompt(): YOLO 标签 → 文本 prompt
+  → DeepSeek API: 基于"检测到2人+1球"纯文本推断场景
+  → 标注图从未发给 LLM，仅用于管理平台展示
 ```
 
-**结论**：当前实现是"边端 YOLO 做视觉检测 → 云端 LLM 做文本推理"，标注图仅用于管理平台展示。这不算骗人（YOLO 确实跑了真实视觉检测），但确实不是多模态图片理解——模型从未看过图片本身。
-
-### 1.2 SenseNova 6.7 Flash-Lite 能力确认
+### 1.2 SenseNova 6.7 Flash-Lite（确认可比）
 
 | 项目 | 详情 |
 |---|---|
 | 模型 ID | `sensenova-6.7-flash-lite` |
 | 能力 | 原生多模态：文本 + 图片输入 → 文本输出 |
-| API 地址 | `https://token.sensenova.cn/v1`（推荐）或 `https://api.sensenova.cn/v1` |
+| API 地址 | `https://token.sensenova.cn/v1` |
 | 协议 | 完全 OpenAI-compatible（`/v1/chat/completions`） |
-| 图片格式 | 支持 URL 和 base64，遵循 OpenAI vision content 数组格式 |
-| 上下文 | 256K tokens（输入 252K + 输出 64K） |
-| 免费额度 | 每 5 小时 1500 次调用 |
-| 调用方式 | 与 `langchain-openai` 的 `ChatOpenAI` 完全兼容 |
+| 图片格式 | 支持 base64 data URL，遵循 OpenAI `content` 数组格式 |
+| 上下文 | 256K tokens |
+| 免费额度 | 每 5 小时 1500 次 |
+| Python SDK | 无需额外包，`langchain-openai` 的 `ChatOpenAI` 即可 |
 
-### 1.3 关键发现：配置完全解耦
+### 1.3 关键约束
 
-SenseNova 和 DeepSeek 使用不同的 API key、base_url、model name，互不影响。这意味着可以**同时配置两个模型**，在同一请求中并行或串行调用。
+- `langchain-openai` 已在 `requirements.txt` 中，无需新增依赖
+- `concurrent.futures` 是 Python 标准库
+- 视觉分析不需要 LangChain Agent（不调天气/交通等工具），直接用 `ChatOpenAI.invoke()` 一问一答
 
 ---
 
 ## 二、双模型架构设计
 
-### 2.1 核心思路
+### 2.1 接口协议
 
 ```
-POST /api/edge/analyze  {task_id, mode: "vision"|"text"|"both"}
+POST /api/edge/analyze
+  {task_id, thinking_mode, mode: "text"|"vision"|"both"}
 
-  ┌─ mode="text" (DeepSeek 文本推理，兼容旧行为)
-  │    └─ _analyze_with_text(task)
-  │         └─ 构造 YOLO 标签文本 prompt → LangChain Agent → answer + trace
-  │
-  ├─ mode="vision" (SenseNova 多模态看图)
-  │    └─ _analyze_with_vision(task)
-  │         └─ 读取本地标注图 → base64 编码
-  │         └─ 构造 multimodal prompt（图 + 文字引导）
-  │         └─ ChatOpenAI 直调 SenseNova API → answer
-  │
-  └─ mode="both" (双模型并行，默认)
-       └─ 并行调用 _analyze_with_text() + _analyze_with_vision()
-       └─ 合并结果：视觉分析在前（真实看图），文本分析在后（标签补充）
-       └─ 存入 analysis.answer（合并）+ analysis.text_analysis + analysis.vision_analysis
+mode 默认 "both"，不传时两条路径都跑
 ```
 
-### 2.2 mode="both" 的结果合并策略
+### 2.2 三条分析路径
 
-最终 `analysis` JSON 结构（存入 SQLite）：
+```
+mode="text"（Sentinel DeepSeek 文本推理，完全兼容旧行为）
+  └─ _analyze_with_text(task)
+       └─ _build_edge_analysis_prompt(task) → LangChain Agent → answer + trace
 
-```json
-{
-  "answer": "## 👁️ 多模态视觉分析（模型直接看图）\n\n...\n\n---\n\n## 📊 基于检测标签的文本推理（DeepSeek）\n\n...",
-  "text_analysis": {
-    "answer": "...",
-    "trace": [...],
-    "model": "deepseek-v4-flash"
-  },
-  "vision_analysis": {
-    "answer": "...",
-    "model": "sensenova-6.7-flash-lite"
-  },
-  "mode": "both",
-  "trace": [...]
+mode="vision"（SenseNova 多模态真看图）
+  └─ server/vision_analyzer.py:analyze_with_vision(task)
+       └─ 读取 data/edge_artifacts/ 本地标注图 → base64
+       └─ 构造 multimodal prompt（图 + 引导文字）
+       └─ ChatOpenAI.invoke() → answer
+
+mode="both"（并行，默认）
+  └─ ThreadPoolExecutor 同时跑 text + vision
+  └─ 合并结果 → analysis.answer（vision 在前，text 在后补充）
+```
+
+### 2.3 `analysis` JSON 结构（存入 SQLite）
+
+```python
+analysis = {
+    "answer": "## 👁️ 多模态视觉分析\n\n...\n\n---\n\n## 📊 文本推理补充\n\n...",
+    "trace": [...],               # trace 来自 text agent（vision 没有 trace）
+    "structured_data": {...},     # 来自 text agent
+    "mode": "both",
+    "text_analysis": {
+        "answer": "...",
+        "trace": [...],
+        "model": "deepseek-v4-pro",
+        "structured_data": {...},
+    },
+    "vision_analysis": {
+        "answer": "...",
+        "model": "sensenova-6.7-flash-lite",
+    },
 }
 ```
 
-注意：`answer` 字段保持不变，确保管理平台前端完全零改动能正常工作。`text_analysis` 和 `vision_analysis` 是新增字段，前端可以后续选择性展示。
+**关键设计决策**：顶层 `answer` / `trace` / `structured_data` 三个字段与旧格式完全兼容。所有现有前端渲染代码（`EdgeMonitor.js` `parseAgentAnalysis()`、`TaskModal.js` 的 `v-html="renderMarkdown(...)"`、报告导出的 `_build_task_report()`）都只读 `analysis.answer` 和 `analysis.trace`——不改它们就不会坏。
 
-### 2.3 向后兼容
+### 2.4 降级策略
 
-- 如果 `.env` 中未配置 `VISION_API_KEY`，自动降级为纯文本模式
-- 如果任务没有标注图（手动上传事件），自动降级为纯文本模式
-- `mode` 参数默认值为 `"both"`，前端按钮不传 mode 时两种分析都跑
-- 旧 API 调用方（Atlas 脚本、前端控制台）完全无需修改
+| 场景 | 行为 |
+|---|---|
+| `.env` 无 `VISION_API_KEY` | `mode="both"` 自动降级为纯 text；`mode="vision"` 返回错误 |
+| 任务无标注图 | vision 跳过，只跑 text |
+| SenseNova API 超时/报错 | vision 异常被 catch，text 结果照常返回，`vision_analysis.error` 记录原因 |
+| DeepSeek API 超时/报错 | text 异常被 catch，vision 结果照常返回 |
+| 两个都失败 | 整体返回 500 error |
+
+### 2.5 重要：前端 `parseAgentAnalysis()` 兼容性
+
+当前 `EdgeMonitor.js:50` 的 `parseAgentAnalysis()` 用这个正则从 `answer` 中提取场景理解：
+
+```javascript
+// 行 58
+const semMatch = answer.match(/(?:场景理解|场景语义分析|图像语义|场景分析)[:：\s]*\n*([^#\n]+)/);
+```
+
+这个正则**不会匹配** `"场景视觉分析"`。必须让 vision answer 的第一行能被匹配到。方案有两个：
+
+**方案 A（推荐）：修改 `parseAgentAnalysis()` 的正则，增加 `"场景视觉分析"`**
+
+```javascript
+// EdgeMonitor.js 行 58，改为：
+const semMatch = answer.match(/(?:场景理解|场景语义分析|图像语义|场景分析|场景视觉分析)[:：\s]*\n*([^#\n]+)/);
+```
+
+**方案 B：让 vision prompt 生成的标题直接用现有匹配词**
+
+让 vision analyzer 的 prompt 要求输出标题用 `"## 💡 场景语义分析"` 而非 `"## 👁️ 场景视觉分析"`，就无需改前端。
+
+**本计划采用方案 A**——因为"场景视觉分析"这个标题更准确地描述了"模型真正看图理解"的行为，修改一行正则的代价很小。
+
+### 2.6 风险等级解析兼容性
+
+```javascript
+// EdgeMonitor.js 行 53-55
+let riskLevel = "低风险";
+if (answer.includes("高风险")) riskLevel = "高风险";
+else if (answer.includes("中风险")) riskLevel = "中风险";
+```
+
+这个逻辑只匹配字符串 `"高风险"` 和 `"中风险"`——只要 vision prompt 和 text prompt 都输出 `**风险评级**：高风险` 这样的格式，就能正确解析。当前 `_build_edge_analysis_prompt()`（行 736）就是这种格式，vision prompt 保持同样格式即可。
 
 ---
 
 ## 三、需要修改的文件
 
-### 3.1 新建文件：`server/vision_analyzer.py`
+### 文件 1（新建）：`server/vision_analyzer.py`
 
-这是核心新增模块，封装所有多模态视觉分析逻辑。独立成文件是为了职责分离——不污染已有 1000+ 行的 `edge_routes.py`。
+完整新建的文件。职责：封装所有多模态视觉分析逻辑，与 `edge_routes.py` 中的文本分析完全解耦。
 
 ```python
 # server/vision_analyzer.py
 """
 多模态视觉分析模块。
-使用 SenseNova 6.7 Flash-Lite 直接对 YOLO 标注图进行像素级场景理解。
+使用 SenseNova 6.7 Flash-Lite 直接对 Atlas YOLO 标注图进行像素级场景理解。
+与 DeepSeek 文本分析路径完全独立。
 """
 
 from __future__ import annotations
 
 import base64
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -120,146 +232,185 @@ EDGE_ARTIFACT_DIR = PROJECT_ROOT / "data" / "edge_artifacts"
 
 class VisionConfig:
     """从 .env 加载多模态视觉模型配置，与主 LLMConfig 完全独立。"""
-    def __init__(self):
+
+    def __init__(self) -> None:
         load_dotenv()
-        self.api_key = os.getenv("VISION_API_KEY", "").strip()
-        self.base_url = os.getenv("VISION_BASE_URL", "https://token.sensenova.cn/v1").strip()
-        self.model = os.getenv("VISION_MODEL", "sensenova-6.7-flash-lite").strip()
-        self.enabled = bool(self.api_key)
+        self.api_key: str = os.getenv("VISION_API_KEY", "").strip()
+        self.base_url: str = os.getenv(
+            "VISION_BASE_URL", "https://token.sensenova.cn/v1"
+        ).strip()
+        self.model: str = os.getenv(
+            "VISION_MODEL", "sensenova-6.7-flash-lite"
+        ).strip()
+        self.temperature: float = float(os.getenv("VISION_TEMPERATURE", "0.3"))
+        self.timeout: int = int(os.getenv("VISION_TIMEOUT", "120"))
 
     @property
     def is_available(self) -> bool:
-        return self.enabled
+        return bool(self.api_key)
 
 
 def load_vision_config() -> VisionConfig:
     return VisionConfig()
 
 
-def get_annotated_image_base64(task: dict[str, Any]) -> bytes | None:
-    """根据任务中的 annotated_image_url 读取本地标注图文件并返回 base64 编码。"""
+def get_annotated_image_base64(task: dict[str, Any]) -> tuple[str | None, str]:
+    """读取任务的标注图并返回 (base64_string, mime_type)。
+
+    返回 (None, "") 表示无可用图片。
+    """
     event = task.get("event") or {}
     filename = event.get("annotated_image_filename") or ""
+
+    # 如果事件里没有文件名，尝试从 URL 提取
     if not filename:
-        # 尝试从 URL 中提取文件名
         url = event.get("annotated_image_url", "")
         if url.startswith("/api/edge/artifacts/"):
             filename = url.replace("/api/edge/artifacts/", "")
+
     if not filename:
-        return None
-    image_path = EDGE_ARTIFACT_DIR / filename
+        return None, ""
+
+    image_path = EDGE_ARTIFACT_DIR / Path(filename).name  # 防目录穿越
     if not image_path.exists():
-        return None
-    return base64.b64encode(image_path.read_bytes()).decode("ascii")
+        return None, ""
+
+    image_bytes = image_path.read_bytes()
+
+    # 如果图片 > 2MB，太大的 base64 可能超出 token 限制，需要告知调用方
+    # 实际上 const 256K token 足够容纳 ~10MB base64，但先留这个检查
+    if len(image_bytes) > 5 * 1024 * 1024:
+        # 可以在未来加 PIL 压缩逻辑
+        pass
+
+    suffix = image_path.suffix.lower()
+    mime = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }.get(suffix, "image/jpeg")
+
+    return base64.b64encode(image_bytes).decode("ascii"), mime
 
 
 def build_vision_prompt(task: dict[str, Any]) -> str:
     """构造发给多模态模型的提示词。
-    
-    与 DeepSeek 文本 prompt 不同，这里不需要罗列 YOLO 标签——
-    模型会直接看标注图中的检测框和标签文字，自己理解场景。
-    我们只需提供任务上下文和输出格式要求。
+
+    与 _build_edge_analysis_prompt 的区别：
+    - 这里不罗列 YOLO 标签（模型会自己看标注图中的检测框和文字标签）
+    - 引导模型观察视觉细节（位置关系、环境背景、光照等）
+    - 输出格式与 _build_edge_analysis_prompt 保持一致的三段式结构，
+      确保前端 EdgeMonitor.js 的 parseAgentAnalysis() 能正确提取。
     """
     event = task.get("event") or {}
     inference = event.get("inference") or {}
     summary = event.get("summary") or {}
-    edge_decision = event.get("edge_decision") or {}
-    
-    return f"""你正在查看一张由 Atlas 200I DK A2 边缘设备上的 YOLOv5 模型生成的标注图像。
-图像上已经绘制了检测框和类别标签。
 
-边端 YOLO 的检测摘要（供参考）：
+    return f"""你正在查看一张由 Atlas 200I DK A2 昇腾边缘计算设备上 YOLOv5 模型生成的**标注图像**。
+图像上已经用绿色框绘制了检测目标，红色文字标注了类别名称和置信度。
+
+边端 YOLO 检测的元数据（帮助你理解标注框的语义）：
 - 总目标数: {summary.get('total_count', 0)}
 - 人数: {summary.get('person_count', 0)}
 - 车辆数: {summary.get('vehicle_count', 0)}
-- 模型: {inference.get('model', 'unknown')}
-- 推理延迟: {inference.get('latency_ms', 'N/A')} ms
+- 推理模型: {inference.get('model', 'unknown')}
 
-请直接输出以下三部分内容，使用 Markdown 格式：
+请你**基于你亲眼看到的图像内容**（而不仅仅是上面的标签数字），直接输出以下三部分：
 
-## 👁️ 场景视觉分析
-[基于你对图片的实际观察，描述你看到的是什么场景。注意图片中的物体位置关系、环境背景、光照条件等视觉细节——这是 YOLO 标签无法传达的信息。]
+## 💡 场景视觉分析
+[描述你从图像中实际观察到的场景。注意：人物之间的位置关系、环境背景（室内/室外/城市/自然）、光照条件、是否有遮挡、标注框覆盖的物体之间的空间关系等——这些都是 YOLO 标签数字无法传达的视觉信息。]
 
 ## ⚠️ 风险等级评估
 **风险评级**：[低风险 / 中风险 / 高风险]
-**判定依据**：[基于你对图片的视觉观察，判断该场景下是否存在安全隐患。]
+**判定依据**：[基于视觉观察，判断该场景是否存在安全隐患。例如：人员密集度、交通状况、异常行为等。]
 
 ## 🛠️ 智能处置建议
-1. [基于视觉理解给出具体建议]
-2. [是否需要进一步人工复核或触发告警]
+1. [基于视觉理解给出具体的边端设备调度指令]
+2. [是否需要进一步人工复核或触发告警联动]
 
-请保持简明扼要，直接输出三部分。"""
+请保持简洁，直接输出三部分内容，不要额外的前言后缀。"""
 
 
 def analyze_with_vision(task: dict[str, Any]) -> dict[str, Any]:
-    """核心函数：使用多模态模型分析 YOLO 标注图。
-    
-    返回格式与现有 agent 分析兼容：
+    """核心：使用 SenseNova 多模态模型分析 YOLO 标注图。
+
+    返回格式与文本分析路径兼容：
     {
-        "answer": "Markdown 格式的分析文本",
-        "model": "使用的模型名称",
-        "trace": []  # vision 调用不是 agent，trace 为空
+        "answer": "Markdown 格式分析文本",
+        "model": "使用的模型名",
+        "error": None   # 或 str
     }
     """
     config = load_vision_config()
     if not config.is_available:
-        return {"answer": "", "model": "", "error": "VISION_API_KEY 未配置", "trace": []}
-    
-    image_b64 = get_annotated_image_base64(task)
+        return {"answer": "", "model": "", "error": "VISION_API_KEY 未在 .env 中配置"}
+
+    image_b64, mime_type = get_annotated_image_base64(task)
     if not image_b64:
-        return {"answer": "", "model": "", "error": "任务无标注图，无法进行视觉分析", "trace": []}
-    
+        return {"answer": "", "model": "", "error": "该任务无标注图，无法进行多模态视觉分析"}
+
     prompt_text = build_vision_prompt(task)
-    
+    data_url = f"data:{mime_type};base64,{image_b64}"
+
     llm = ChatOpenAI(
         model=config.model,
         api_key=config.api_key,
         base_url=config.base_url,
-        temperature=0.3,
-        timeout=120,
+        temperature=config.temperature,
+        timeout=config.timeout,
     )
-    
-    # OpenAI vision format: content is an array of text + image blocks
-    message = {
+
+    # OpenAI vision format
+    message: dict[str, Any] = {
         "role": "user",
         "content": [
             {"type": "text", "text": prompt_text},
             {
                 "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{image_b64}",
-                    "detail": "high"
-                }
-            }
-        ]
+                "image_url": {"url": data_url, "detail": "high"},
+            },
+        ],
     }
-    
+
     response = llm.invoke([message])
-    answer = response.content if hasattr(response, 'content') else str(response)
-    
+    content: str = (
+        response.content if hasattr(response, "content") else str(response)
+    )
+
     return {
-        "answer": answer.strip() if answer else "",
+        "answer": content.strip() if content else "",
         "model": config.model,
-        "trace": [],
+        "error": None,
     }
 ```
 
-### 3.2 修改文件：`server/edge_routes.py`
+### 文件 2（修改）：`server/edge_routes.py`
 
-改动集中在 `analyze_edge_task()` 函数（行 526-554），重写为支持双模式。
+#### 2a：新增导入（在顶部 import 区域）
 
-**改动点 A**：顶部导入新增
+在行 13 `import paramiko` 之后新增两行：
 
 ```python
-# 在文件顶部 import 区域新增
+import concurrent.futures
+
 from server.vision_analyzer import analyze_with_vision, load_vision_config
 ```
 
-**改动点 B**：重写 `analyze_edge_task()` 函数
+#### 2b：重写 `analyze_edge_task()`（行 535-563）
+
+完整替换：
 
 ```python
 @edge_bp.post("/api/edge/analyze")
 def analyze_edge_task():
+    """触发云端 Agent 对边端任务进行语义分析。
+
+    支持三种分析模式（payload.mode）：
+    - "text":   仅 DeepSeek 文本推理（YOLO 标签 → prompt → LLM）
+    - "vision": 仅 SenseNova 多模态看图（标注图 base64 → VLM）
+    - "both":   两者并行执行，合并结果（默认）
+    """
     payload = request.get_json(silent=True) or {}
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
@@ -267,89 +418,100 @@ def analyze_edge_task():
     task_id = str(payload.get("task_id") or "").strip()
     task = get_edge_task(task_id) if task_id else None
     if not task:
-        event = _normalize_edge_event(payload.get("event") if isinstance(payload.get("event"), dict) else payload)
+        event = _normalize_edge_event(
+            payload.get("event") if isinstance(payload.get("event"), dict) else payload
+        )
         task = create_edge_task(event, status="received")
         task_id = task["id"]
 
-    # 分析模式：vision（多模态看图）/ text（DeepSeek 文本）/ both（两者，默认）
     mode = str(payload.get("mode") or "both").strip()
-
     vision_config = load_vision_config()
     event = task.get("event") or {}
-    has_image = bool(event.get("annotated_image_url") or event.get("annotated_image_filename"))
+    has_image = bool(
+        event.get("annotated_image_url")
+        or event.get("annotated_image_filename")
+    )
 
-    # === 模式路由 ===
+    # ---- 模式路由 ----
+    text_result: dict[str, Any] | None = None
+    vision_result: dict[str, Any] | None = None
 
-    vision_result = None
-    text_result = None
-    combined_trace = []
+    # 快速校验
+    if mode == "vision" and not vision_config.is_available:
+        return jsonify({
+            "ok": False,
+            "error": "VISION_API_KEY 未在 .env 中配置，无法使用多模态视觉分析模式。"
+        }), 400
+    if mode == "vision" and not has_image:
+        return jsonify({
+            "ok": False,
+            "error": "该任务没有标注图，无法进行视觉分析。"
+        }), 400
 
     try:
-        # 并行执行两条分析路径（注意：Flask 默认是同步的，用 concurrent.futures 实现）
-        import concurrent.futures
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {}
+            futures: dict[str, concurrent.futures.Future] = {}
 
-            # Text analysis (DeepSeek / LangChain Agent)
             if mode in ("text", "both"):
-                futures["text"] = executor.submit(
-                    _run_text_analysis, task
-                )
+                futures["text"] = executor.submit(_run_text_analysis, task)
 
-            # Vision analysis (SenseNova multimodal)
             if mode in ("vision", "both") and vision_config.is_available and has_image:
-                futures["vision"] = executor.submit(
-                    analyze_with_vision, task
-                )
-            elif mode == "vision" and not vision_config.is_available:
-                return jsonify({
-                    "ok": False,
-                    "error": "VISION_API_KEY 未在 .env 中配置，无法使用多模态视觉分析模式。"
-                }), 400
-            elif mode == "vision" and not has_image:
-                return jsonify({
-                    "ok": False,
-                    "error": "该任务没有标注图，无法进行视觉分析。"
-                }), 400
+                futures["vision"] = executor.submit(analyze_with_vision, task)
 
             # 收集结果
             if "text" in futures:
                 try:
                     text_result = futures["text"].result(timeout=180)
                 except Exception as exc:
-                    text_result = {"answer": f"文本分析失败: {exc}", "trace": [], "model": "", "error": str(exc)}
+                    text_result = {
+                        "answer": "",
+                        "trace": [],
+                        "model": "",
+                        "error": str(exc),
+                    }
 
             if "vision" in futures:
                 try:
                     vision_result = futures["vision"].result(timeout=120)
                 except Exception as exc:
-                    vision_result = {"answer": "", "model": "", "error": str(exc), "trace": []}
+                    vision_result = {
+                        "answer": "",
+                        "model": "",
+                        "error": str(exc),
+                    }
 
             # 合并结果
-            answer_parts = []
+            answer_parts: list[str] = []
             if vision_result and vision_result.get("answer"):
                 answer_parts.append(vision_result["answer"])
             if text_result and text_result.get("answer"):
-                # 去掉 text_result 中可能已有的 "场景语义分析" 等标题，
-                # 因为 vision 分析已经提供了同类内容。改为标记为补充分析。
-                text_answer = text_result["answer"]
-                if vision_result and vision_result.get("answer"):
-                    answer_parts.append("\n\n---\n\n## 📊 基于检测标签的文本推理补充（DeepSeek）\n\n" + text_answer)
+                if answer_parts:
+                    answer_parts.append(
+                        "\n\n---\n\n## 📊 基于检测标签的文本推理补充（DeepSeek）\n\n"
+                        + text_result["answer"]
+                    )
                 else:
-                    answer_parts.append(text_answer)
+                    answer_parts.append(text_result["answer"])
 
-            combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析未能生成结果。"
+            combined_answer = (
+                "\n\n".join(answer_parts) if answer_parts else "分析未能生成结果。"
+            )
 
-            # 合并 trace
-            if text_result and text_result.get("trace"):
-                combined_trace = list(text_result["trace"])
-            if vision_result and vision_result.get("trace"):
-                combined_trace = combined_trace + list(vision_result["trace"])
+            # 合并 trace（只来自 text agent）
+            combined_trace: list[dict[str, Any]] = (
+                list(text_result["trace"])
+                if text_result and text_result.get("trace")
+                else []
+            )
 
             analysis = {
                 "answer": combined_answer,
                 "trace": combined_trace,
+                "structured_data": (
+                    text_result.get("structured_data")
+                    if text_result
+                    else None
+                ),
                 "mode": mode,
                 "text_analysis": text_result,
                 "vision_analysis": vision_result,
@@ -359,15 +521,21 @@ def analyze_edge_task():
             return jsonify({"ok": True, "task": updated, "analysis": analysis})
 
     except Exception as exc:
-        # 整体异常兜底
-        return jsonify({"ok": False, "error": f"分析过程异常: {str(exc)}"}), 500
+        return jsonify({
+            "ok": False,
+            "error": f"分析过程异常: {str(exc)}"
+        }), 500
+```
 
+#### 2c：新增 `_run_text_analysis()` 辅助函数（放在 `analyze_edge_task` 后面）
 
+```python
 def _run_text_analysis(task: dict[str, Any]) -> dict[str, Any]:
-    """提取为独立函数以便在线程池中执行。"""
-    from travel_agent.agent import run_agent_with_trace
-    from travel_agent.config import load_llm_config
+    """纯文本分析路径（DeepSeek）。
 
+    从 analyze_edge_task 中提取为独立函数，方便在 ThreadPoolExecutor 中执行。
+    使用模块级已有的 run_agent_with_trace / load_llm_config / _build_edge_analysis_prompt。
+    """
     prompt = _build_edge_analysis_prompt(task)
     config = load_llm_config()
     answer, trace, structured_data = run_agent_with_trace(
@@ -375,19 +543,57 @@ def _run_text_analysis(task: dict[str, Any]) -> dict[str, Any]:
         config,
         thinking_mode=True,
         message_history=[],
-        client_context="你正在处理 Atlas 200I DK A2 边端 YOLO 检测结果，请优先给出场景理解、风险等级和调度建议。",
+        client_context=(
+            "你正在处理 Atlas 200I DK A2 边端 YOLO 检测结果，"
+            "请优先给出场景理解、风险等级和调度建议。"
+        ),
     )
     return {
         "answer": answer,
         "trace": trace,
-        "model": config.model,
+        "model": config.thinking_model,
         "structured_data": structured_data,
+        "error": None,
     }
 ```
 
-### 3.3 修改文件：`.env.example`
+### 文件 3（修改）：`static/components/EdgeMonitor.js`
 
-在文件末尾新增多模态视觉模型配置段：
+#### 行 58：`parseAgentAnalysis()` 正则增加 `"场景视觉分析"`
+
+找到行 58：
+
+```javascript
+const semMatch = answer.match(/(?:场景理解|场景语义分析|图像语义|场景分析)[:：\s]*\n*([^#\n]+)/);
+```
+
+改为：
+
+```javascript
+const semMatch = answer.match(/(?:场景理解|场景语义分析|图像语义|场景分析|场景视觉分析)[:：\s]*\n*([^#\n]+)/);
+```
+
+**只需要加 `|场景视觉分析` 这一个词**，其余逻辑不变。
+
+### 文件 4（修改）：`static/app.js`
+
+#### 行 486：`runAnalysis()` 的 fetch body 新增 `mode: "both"`
+
+找到行 484-486：
+
+```javascript
+body: JSON.stringify({ task_id: taskId, thinking_mode: true })
+```
+
+改为：
+
+```javascript
+body: JSON.stringify({ task_id: taskId, thinking_mode: true, mode: "both" })
+```
+
+### 文件 5（修改）：`.env.example`
+
+在文件末尾新增视觉模型配置段：
 
 ```bash
 # ============================================================
@@ -395,159 +601,114 @@ def _run_text_analysis(task: dict[str, Any]) -> dict[str, Any]:
 # 用于对 Atlas YOLO 标注图进行像素级场景理解。
 # 与主 LLM（DeepSeek）完全独立，可同时配置。
 # 若不配置 VISION_API_KEY，系统自动降级为纯文本标签推理模式。
+# 在商汤大模型平台 https://platform.sensenova.cn 获取 API Key。
 # ============================================================
-# VISION_API_KEY 在商汤大模型平台 (https://platform.sensenova.cn) 获取。
-# VISION_BASE_URL 默认为商汤公测地址，通常无需修改。
-# VISION_MODEL 使用免费的 sensenova-6.7-flash-lite。
 VISION_API_KEY=sk-your_sensenova_api_key_here
 VISION_BASE_URL=https://token.sensenova.cn/v1
 VISION_MODEL=sensenova-6.7-flash-lite
+VISION_TEMPERATURE=0.3
+VISION_TIMEOUT=120
 ```
 
-### 3.4 修改文件：真实 `.env`
+### 文件 6（修改）：真实 `.env`（手工操作）
 
-在用户本地的 `.env` 文件中（**不提交 git**），新增实际可用的 API key：
+由执行者在本地 `.env` 末尾添加（内容不入 git）：
 
 ```bash
 VISION_API_KEY=sk-i854S3w6vK22OZM8WRGsseemMDZX3mXc
 VISION_BASE_URL=https://token.sensenova.cn/v1
 VISION_MODEL=sensenova-6.7-flash-lite
-```
-
-### 3.5 修改文件：`static/components/EdgeMonitor.js`（前端按钮支持 mode 参数）
-
-当前任务卡片上的"云端分析"按钮发送请求时没有传 `mode`。默认 `mode="both"`，所以不改也能跑。但可以给请求加 `mode` 字段，让前端能控制分析策略：
-
-```javascript
-// EdgeMonitor.js 中 runAnalysis 的 emit 触发时，app.js 中 runAnalysis 函数改为：
-const runAnalysis = async (taskId, mode = "both") => {
-    const response = await fetch("/api/edge/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task_id: taskId, thinking_mode: true, mode })
-    });
-    // ...
-};
-```
-
-传入 `mode: "both"` 即可同时触发两种分析。
-
-### 3.6 修改文件：`static/components/TaskModal.js`（展示双模型结果）
-
-`TaskModal.js` 目前只渲染 `taskDetail.analysis?.answer`。因为 answer 中已经合并了两个模型的结果，前端**不需要改动**就能展示。但未来可以新增分栏展示两个模型各自的输出。
-
-### 3.7 前端界面说明
-
-**零改动即可工作**：因为分析结果仍然写入 `analysis.answer`，所有现有的展示逻辑（EdgeMonitor 卡片上的 Agent 分析卡片、TaskModal 弹窗、报告导出）都不需要修改。analyze 按钮默认 `mode="both"`，两个模型并行跑，结果自动合并到 answer 中。
-
----
-
-## 四、数据流对比
-
-### 改造前
-
-```
-Atlas YOLO → detection JSON → POST /api/edge/events → DB
-                                                         ↓
-                                      POST /api/edge/analyze
-                                            ↓
-                                      YOLO标签 → 文本prompt
-                                            ↓
-                                      DeepSeek(纯文本) → analysis.answer
-```
-
-### 改造后
-
-```
-Atlas YOLO → detection JSON + annotated.jpg → POST /api/edge/events → DB
-                                                                          ↓
-                                                       POST /api/edge/analyze {mode:"both"}
-                                                                  ↓
-                                          ┌───────────────────────┴───────────────────────┐
-                                          ↓ (线程1)                                     ↓ (线程2)
-                                    YOLO标签 → 文本prompt                  读取本地标注图 → base64编码
-                                          ↓                                               ↓
-                                    DeepSeek(纯文本)                      SenseNova(多模态，真看图)
-                                          ↓                                               ↓
-                                    text_result                                vision_result
-                                          ↓                                               ↓
-                                          └───────────────────┬───────────────────────────┘
-                                                              ↓
-                                              合并: answer = vision + text
-                                                              ↓
-                                                    存入 analysis JSON → DB
-                                                              ↓
-                                                    管理平台零改动 → 正常展示
+VISION_TEMPERATURE=0.3
+VISION_TIMEOUT=120
 ```
 
 ---
 
-## 五、错误处理与降级策略
+## 四、不需要改的文件（确认）
 
-| 场景 | 行为 |
+| 文件 | 原因 |
 |---|---|
-| `VISION_API_KEY` 未配置 | vision 不可用，`mode="both"` 时只跑 text，`mode="vision"` 时返回错误 |
-| 任务无标注图 | vision 不可用，降级为纯 text |
-| SenseNova API 超时/报错 | vision 失败，text 结果照常返回，answer 中注明 vision 分析失败 |
-| DeepSeek API 超时/报错 | text 失败，vision 结果照常返回 |
-| 两个 API 都失败 | 返回整体错误 |
-| 标注图文件被删除 | vision 启动前检测文件是否存在，不存在则跳过 |
+| `templates/index.html` | Vue 模板，只绑定组件，无分析逻辑 |
+| `static/components/TaskModal.js` | 只用 `taskDetail.analysis.answer` 做 `v-html="renderMarkdown(...)"`，不解析内容结构 |
+| `static/components/SidebarComponent.js` | 只有 SSH 控制按钮，不涉及分析 |
+| `static/components/TravelAssistant.js` | 出行面板，无关 |
+| `static/travel_helpers.js` | 辅助函数，无关 |
+| `static/map_helpers.js` | 地图函数，无关 |
+| `static/styles.css` | 样式表，无关 |
+| `src/travel_agent/agent.py` | LangChain Agent 构建，视觉分析不经过它 |
+| `src/travel_agent/config.py` | LLMConfig 仅管 DeepSeek/对话 LLM，Vision 用独立的 VisionConfig |
+| `src/travel_agent/storage.py` | `update_edge_task_analysis()` 直接存 JSON dict，字段不限制 |
+| `edge/atlas_yolo_detect_and_upload.py` | Atlas 端脚本，不改。上传逻辑不变 |
+| `edge/atlas_upload_client.py` | 同上 |
+| `server/vision_analyzer.py` | **新建**文件，不需要改 |
 
 ---
 
-## 六、实施步骤（按顺序）
+## 五、实施步骤
 
-### Step 1: 新建 `server/vision_analyzer.py`
-- 复制上述完整代码
-- 包含 `VisionConfig`、`load_vision_config()`、`get_annotated_image_base64()`、`build_vision_prompt()`、`analyze_with_vision()`
+### Step 1：创建 `server/vision_analyzer.py`
 
-### Step 2: 修改 `server/edge_routes.py`
-- 顶部新增 `from server.vision_analyzer import analyze_with_vision, load_vision_config`
-- 新增 `import concurrent.futures`
-- 重写 `analyze_edge_task()` 函数（替换第 526-554 行）
-- 新增 `_run_text_analysis()` 辅助函数（放在 `analyze_edge_task` 下方）
+复制第三节文件 1 的完整代码。
 
-### Step 3: 修改 `.env.example`
-- 文件末尾新增 Vision 配置段
+### Step 2：修改 `server/edge_routes.py`
 
-### Step 4: 更新真实 `.env`
-- 写入实际的 `VISION_API_KEY`
+执行三个修改：
+1. 顶部新增 `import concurrent.futures` 和 `from server.vision_analyzer import ...`
+2. 替换 `analyze_edge_task()` 函数体（行 535-563）
+3. 在 `analyze_edge_task` 下方新增 `_run_text_analysis()` 函数
 
-### Step 5: 语法验证
+### Step 3：修改前端
+
+1. `static/components/EdgeMonitor.js` 行 58：正则加 `|场景视觉分析`
+2. `static/app.js` 行 484-486：body 加 `mode: "both"`
+
+### Step 4：修改配置文件
+
+1. `.env.example` 末尾追加视觉配置段
+2. 真实 `.env` 末尾追加实际 API key（手工操作，不入 git）
+
+### Step 5：重启服务验证
+
 ```powershell
-C:\Users\BaoXinJie\anaconda3\python.exe -c "
-import sys
-sys.path.insert(0, r'C:\Users\BaoXinJie\Desktop\In NBU\计算机系统实习\atlas work\src')
-from server.vision_analyzer import VisionConfig, analyze_with_vision
-from server.edge_routes import edge_bp
-print('All imports OK')
-"
-```
+# 停止旧服务
+Get-Process -Name "python*" -ErrorAction SilentlyContinue |
+  Where-Object { $_.Path -like "*anaconda3*" } |
+  Stop-Process -Force
 
-### Step 6: 端到端测试
-1. 重启 Flask 服务
-2. 确保 Atlas 已上传过标注图的任务存在
-3. 浏览器打开管理平台，点击任务的"云端分析"按钮
-4. 验证：分析结果包含"👁️ 场景视觉分析"（来自 SenseNova 真看图）和"📊 文本推理补充"（来自 DeepSeek）
-5. 或者用 curl 直接测试：
-```bash
+# 启动新服务
+cd "C:\Users\BaoXinJie\Desktop\In NBU\计算机系统实习\atlas work"
+C:\Users\BaoXinJie\anaconda3\python.exe app.py
+
+# curl 测试
 curl -X POST http://127.0.0.1:5000/api/edge/analyze \
   -H "Content-Type: application/json" \
-  -d '{"task_id": "edge-xxx", "mode": "both"}'
+  -d '{"task_id": "<存在的任务ID>", "mode": "both"}'
 ```
+
+### Step 6：前端验证
+
+1. 浏览器打开 `http://127.0.0.1:5000`
+2. 切换到"边云协同"模式
+3. 点击任一有标注图的任务的"云端分析"按钮
+4. 等待完成后检查：
+   - 卡片上的 Agent 分析卡片是否正确显示风险等级
+   - 点击卡片打开详情弹窗，查看完整分析内容是否包含视觉分析 + 文本推理两部分
+   - 导出 Markdown 报告查看是否包含完整内容
 
 ---
 
-## 七、注意事项与风险
+## 六、风险与注意事项
 
-1. **SenseNova API 是免费的但有调用频率限制**（每 5 小时 1500 次）。正常使用不会超标，但如果频繁重复分析同一任务要小心。
+1. **SenseNova 免费额度限制**：每 5 小时 1500 次调用。正常使用绰绰有余，但不要频繁对同一任务重复分析。
 
-2. **标注图 base64 可能很大**。一张 1920×1080 的 JPEG 约 200-500KB，base64 后约 270-670KB。SenseNova 的 256K token 上下文可以容纳，但如果图片特别大可能需要先压缩。建议如果图片超过 1MB，先用 PIL 压缩到 1024px 宽再编码。
+2. **`concurrent.futures` 需要多线程**：Werkzeug 开发服务器默认开启多线程（`threaded=True`），ThreadPoolExecutor 可以正常工作。生产环境用 gunicorn 时确保 worker ≥ 2。
 
-3. **并行调用需要 `concurrent.futures`**（Python 标准库，无需安装）。Flask 的默认开发服务器（Werkzeug）支持多线程，但生产环境用 gunicorn 时需确保 worker 数 ≥ 2。
+3. **`ChatOpenAI` 的 vision 格式**：`langchain-openai` 的 `ChatOpenAI` 支持 image_url content block——因为它底层就是 `openai` SDK。实测同一份代码可以同时用于文本 LLM（DeepSeek）和 vision LLM（SenseNova），只需改 `api_key` / `base_url` / `model`。
 
-4. **`analysis_json` 字段体积**：双模型结果存入同一个 JSON 字段，比之前大约增加一倍的文本。SQLite 的 TEXT 类型可以存储，但注意单个字段不要超过 1GB（实际不可能，分析文本通常 2-10KB）。
+4. **标注图可能很大**：如果原始图 > 5MB，base64 后 > 6.7MB，虽然 SenseNova 256K token 可以容纳，但编码耗时和传输时间会明显变长。当前不做压缩处理（world_cup.jpg 约 100KB 级别，不是问题）。后续如果需要处理大图，可在 `get_annotated_image_base64()` 中加 PIL resize。
 
-5. **向后兼容**：`analysis.answer` 只有在请求了对应模式时才会变化。如果不传 `mode` 参数，默认 `"both"`，两个模型都跑。旧的 Atlas 脚本调用 `/api/edge/analyze` 时不传 mode，因此会自动同时触发两种分析——**对 Atlas 端零改动**。
+5. **Werkzeug 的 reloader 问题**：`app.py` 里 `debug=False`，不使用 reloader，所以新增文件不会被自动重载。每次改完代码必须手动重启。
 
-6. **必须创建新文件** `server/vision_analyzer.py`，这是为了避免 `edge_routes.py` 继续膨胀。同时保持关注点分离——视觉分析逻辑、文本分析逻辑、路由处理各司其职。
+6. **`paramiko` 不在 `requirements.txt`**：这是 Gemini 添加 SSH 控制时遗留的问题，不影响本任务，但后续应补上。本任务新增的文件不需要额外依赖（`langchain-openai` 和 `concurrent.futures` 已经在项目中）。
+
+7. **前端 `parseAgentAnalysis()` 的正则改动极轻**：只在拼接串里加一个 `|场景视觉分析`，不会影响任何已有分析结果的解析。

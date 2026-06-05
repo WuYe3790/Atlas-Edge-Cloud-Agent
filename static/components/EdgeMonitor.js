@@ -11,7 +11,7 @@ export default {
     sshStatus: { type: String, default: 'disconnected' },
     sshStatusText: { type: String, default: '未连接' }
   },
-  emits: ['open-task', 'run-analysis', 'refresh-tasks', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh'],
+  emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh'],
   data() {
     return {
       expandedTaskId: null
@@ -101,7 +101,6 @@ export default {
           </button>
           <h2>昇腾边云协同控制中心 (Ascend Edge-Cloud Monitor Console)</h2>
         </div>
-        <button class="dashboard-refresh-btn" type="button" @click="$emit('refresh-tasks')">刷新任务流</button>
       </header>
       
       <div class="dashboard-container edge-full-tasks-layout" style="padding: 20px; flex: 1; overflow: hidden; display: flex; flex-direction: column;">

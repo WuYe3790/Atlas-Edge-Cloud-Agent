@@ -436,7 +436,6 @@ createApp({
       });
     };
 
-    // Edge tasks & devices polling
     const loadEdgeStatus = async () => {
       try {
         const [tasksResponse, statusResponse] = await Promise.all([
@@ -445,7 +444,7 @@ createApp({
         ]);
         const tasksData = await tasksResponse.json();
         const statusData = await statusResponse.json();
-        
+
         devices.value = statusData.devices || [];
         tasks.value = tasksData.tasks || [];
       } catch (err) {
