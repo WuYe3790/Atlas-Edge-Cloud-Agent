@@ -462,11 +462,11 @@ def main() -> int:
                 try:
                     analysis = analyze_task(args.server, result["task_id"], max(args.timeout, 90))
                     print(json.dumps(analysis, ensure_ascii=False, indent=2))
-                except requests.RequestException as exc:
+                except RequestException as exc:
                     print(f"事件已成功上传 (task_id: {result.get('task_id')})，但触发云端分析失败或超时: {exc}", file=sys.stderr)
             print(f"elapsed_seconds={time.time() - started:.2f}", file=sys.stderr)
             return 0
-        except requests.RequestException as exc:
+        except RequestException as exc:
             saved = save_pending_event(event)
             print(f"上传失败，事件已保存到 {saved}。稍后使用 --retry-pending 重传。错误: {exc}", file=sys.stderr)
             return 1

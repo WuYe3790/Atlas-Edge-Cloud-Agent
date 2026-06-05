@@ -86,7 +86,7 @@ export default {
         <div class="dashboard-column task-column full-width" style="flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;">
           <h3 class="dashboard-column-title" style="display:flex; align-items:center; gap:8px;">
             <span class="icon">⏳</span>
-            <span>最新协同推理与分析任务流</span>
+            <span>最新协同推理与分析任务流 (共 {{ tasks.length }} 个事件)</span>
           </h3>
           
           <div class="edge-tasks-dashboard-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:20px; padding:20px; flex: 1; overflow-y: auto;">

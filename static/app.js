@@ -1,8 +1,8 @@
 import { createApp, ref, reactive, onMounted, watch, nextTick } from 'vue';
-import SidebarComponent from './components/SidebarComponent.js?v=20260604-ssh-fix';
-import TravelAssistant from './components/TravelAssistant.js?v=20260604-ssh-fix';
-import EdgeMonitor from './components/EdgeMonitor.js?v=20260604-ssh-fix';
-import TaskModal from './components/TaskModal.js?v=20260604-ssh-fix';
+import SidebarComponent from './components/SidebarComponent.js?v=20260605-env-fix';
+import TravelAssistant from './components/TravelAssistant.js?v=20260605-env-fix';
+import EdgeMonitor from './components/EdgeMonitor.js?v=20260605-env-fix';
+import TaskModal from './components/TaskModal.js?v=20260605-env-fix';
 
 createApp({
   components: {
@@ -433,8 +433,8 @@ createApp({
     const loadEdgeStatus = async () => {
       try {
         const [tasksResponse, statusResponse] = await Promise.all([
-          fetch("/api/edge/tasks?limit=24"),
-          fetch("/api/edge/status")
+          fetch(`/api/edge/tasks?limit=24&_t=${Date.now()}`),
+          fetch(`/api/edge/status?_t=${Date.now()}`)
         ]);
         const tasksData = await tasksResponse.json();
         const statusData = await statusResponse.json();
@@ -501,7 +501,7 @@ createApp({
       activeTaskDetail.value = null;
 
       try {
-        const response = await fetch(`/api/edge/tasks/${encodeURIComponent(taskId)}`);
+        const response = await fetch(`/api/edge/tasks/${encodeURIComponent(taskId)}?_t=${Date.now()}`);
         const data = await response.json();
         if (data.ok) {
           activeTaskDetail.value = data.task;

@@ -21,6 +21,14 @@ export default {
       const entries = Object.entries(counts);
       if (!entries.length) return '';
       return entries.map(([name, count]) => `${name}:${count}`).join(', ');
+    },
+    renderMarkdown(md) {
+      if (!md) return '无研判内容。';
+      try {
+        return marked.parse(md);
+      } catch (e) {
+        return md;
+      }
     }
   },
   template: `
@@ -151,6 +159,53 @@ export default {
                   <div class="metric-visual-progress-fill npu" :style="{ width: (taskDetail.event.system_metrics.npu.memory_used_mb / taskDetail.event.system_metrics.npu.memory_total_mb * 100) + '%', background:'#f59e0b', height:'100%' }"></div>
                 </div>
                 <span class="metric-visual-value" style="font-size:12px; width:140px; text-align:right;">{{ taskDetail.event.system_metrics.npu.memory_used_mb }} / {{ taskDetail.event.system_metrics.npu.memory_total_mb }} 页 (100% 预留)</span>
+              </div>
+            </section>
+
+            <!-- 8. Cloud Agent Analysis -->
+            <section v-if="taskDetail.analysis && taskDetail.analysis.answer" class="modal-section">
+              <h4 class="modal-section-title">🤖 云端 Agent 智能研判</h4>
+              <div class="modal-analysis-content" v-html="renderMarkdown(taskDetail.analysis.answer)" style="line-height: 1.6; font-size: 13px; color: var(--text); background: rgba(59,130,246,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(59,130,246,0.1);"></div>
+            </section>
+
+            <!-- 9. Agent Execution Trace -->
+            <section v-if="taskDetail.analysis && taskDetail.analysis.trace && taskDetail.analysis.trace.length" class="modal-section">
+              <h4 class="modal-section-title">🧠 智能体执行追踪 (Agent Trace)</h4>
+              <div class="trace-timeline" style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
+                <div v-for="(item, idx) in taskDetail.analysis.trace" :key="idx" 
+                     class="trace-node" 
+                     :style="{
+                       display: 'flex',
+                       gap: '12px',
+                       padding: '10px 14px',
+                       borderRadius: '8px',
+                       border: '1px solid var(--line)',
+                       background: '#fafbfc',
+                       fontSize: '13px',
+                       borderLeft: item.type === 'tool_call' ? '4px solid var(--accent)' : '4px solid #10b981'
+                     }">
+                  <div class="trace-node-icon" style="font-size: 16px;">
+                    {{ item.type === 'tool_call' ? '🔧' : '🤖' }}
+                  </div>
+                  <div class="trace-node-body" style="flex: 1;">
+                    <div class="trace-node-header" style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                      <span class="trace-node-name" style="font-weight: 600;">
+                        {{ item.type === 'tool_call' ? '调用工具: ' + item.tool : '模型响应: ' + (item.model || 'unknown') }}
+                      </span>
+                      <span class="trace-node-duration" style="font-size: 11px; color: var(--muted);">
+                        {{ item.type === 'tool_call' ? (item.duration_ms ? item.duration_ms + 'ms' : '') : (item.usage?.total_tokens ? 'Token 消耗: ' + item.usage.total_tokens : '') }}
+                      </span>
+                    </div>
+                    <div class="trace-node-details" style="font-size: 12px; color: var(--muted); word-break: break-all;">
+                      {{ item.type === 'tool_call' ? '参数: ' + JSON.stringify(item.args) : '状态: ' + (item.status || 'Success') }}
+                    </div>
+                    <div v-if="item.type === 'tool_call' && item.result" 
+                         class="trace-node-details" 
+                         style="font-size: 12px; color: var(--text); margin-top: 4px; word-break: break-all;">
+                      <strong>返回:</strong> {{ item.result.length > 200 ? item.result.substring(0, 200) + '...' : item.result }}
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
             

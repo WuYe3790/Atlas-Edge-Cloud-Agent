@@ -9,6 +9,7 @@ from typing import Any
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 import os
 import socket
+import time
 import paramiko
 
 from server.bootstrap import PROJECT_ROOT
@@ -28,6 +29,15 @@ from travel_agent.storage import (
 edge_bp = Blueprint("edge", __name__)
 EDGE_ARTIFACT_DIR = PROJECT_ROOT / "data" / "edge_artifacts"
 DEFAULT_LOAD_THRESHOLD = 2.0
+
+
+@edge_bp.after_request
+def add_cache_control_headers(response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 
 
 @edge_bp.post("/api/edge/events")
@@ -99,7 +109,7 @@ def edge_status():
         devices[str(device.get("device_id"))] = {
             "device_id": device.get("device_id"),
             "hostname": device.get("hostname") or "",
-            "online": age_seconds is not None and age_seconds <= 300,
+            "online": age_seconds is not None and age_seconds <= 20,
             "age_seconds": age_seconds,
             "last_seen": device.get("updated_at"),
             "latest_task_id": "",
@@ -121,7 +131,7 @@ def edge_status():
         devices[device_id] = {
             "device_id": device_id,
             "hostname": event.get("hostname") or "",
-            "online": age_seconds is not None and age_seconds <= 300,
+            "online": age_seconds is not None and age_seconds <= 20,
             "age_seconds": age_seconds,
             "last_seen": updated_at,
             "latest_task_id": task.get("id"),
@@ -896,8 +906,11 @@ def edge_control():
         return jsonify({"ok": False, "error": "缺少 action 参数"}), 400
 
     board_ip = os.getenv("ATLAS_BOARD_IP", "192.168.0.2").strip()
-    board_user = os.getenv("ATLAS_BOARD_USER", "HwHiAiUser").strip()
+    board_user = os.getenv("ATLAS_BOARD_USER", "root").strip()
     board_password = os.getenv("ATLAS_BOARD_PASSWORD", "Mind@123").strip()
+    
+    # 动态确定板端主目录（如果使用 root 则指向 /home/HwHiAiUser 保证路径兼容性）
+    board_home = f"/home/{board_user}" if board_user != "root" else "/home/HwHiAiUser"
 
     # 自动探测局域网 IP
     server_host = request.host.split(":")[0]
@@ -927,50 +940,127 @@ def edge_control():
         try:
             sftp = ssh.open_sftp()
             local_client_path = str(PROJECT_ROOT / "edge" / "atlas_upload_client.py")
-            sftp.put(local_client_path, f"/home/{board_user}/atlas_upload_client.py")
+            sftp.put(local_client_path, f"{board_home}/atlas_upload_client.py")
             sftp.close()
         except Exception as sftp_err:
             print(f"Warning: Failed to auto-sync atlas_upload_client.py via SFTP: {sftp_err}")
 
         if action == "start_heartbeat":
-            kill_cmd = f'pkill -f "atlas_upload_client.py.*--heartbeat"'
-            ssh.exec_command(kill_cmd)
+            # 1. 停止旧心跳进程
+            _sin, _sout, _serr = ssh.exec_command(
+                "pkill -f 'atlas_upload_client.py.*--heartbeat' || true"
+            )
+            _sout.read()
+            time.sleep(0.5)
+
+            # 2. 用 setsid 创建完全独立于当前 SSH 会话的后台进程。
+            #    setsid → 新 session，nohup → 忽略 SIGHUP，即使 ssh.close()
+            #    关闭 paramiko 通道也不会影响它。
+            #    使用 setsid bash 替换 setsid sh 以支持 source 内置命令。
+            log_file = f"{board_home}/atlas_heartbeat.log"
+            script_path = f"{board_home}/atlas_upload_client.py"
+            python_bin = "/usr/local/miniconda3/bin/python3"
             
-            cmd = f'nohup /usr/local/miniconda3/bin/python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat --watch --interval 10 > /home/{board_user}/atlas_heartbeat.log 2>&1 &'
-            stdin, stdout, stderr = ssh.exec_command(cmd)
-            stdin.close()
-            stdout.close()
-            stderr.close()
-            return jsonify({"ok": True, "message": "已在板端后台启动定时心跳脚本", "command": cmd})
+            # 清理旧日志以防权限问题
+            ssh.exec_command(f"rm -f {log_file}")
             
+            run_cmd = (
+                f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
+                f"nohup {python_bin} -u {script_path}"
+                f" --server {server_url} --heartbeat --watch --interval 10"
+            )
+            daemon_cmd = (
+                f"setsid bash -c '{run_cmd} >> {log_file} 2>&1 &'"
+                f" < /dev/null > /dev/null 2>&1"
+            )
+            _sin, _sout, _serr = ssh.exec_command(daemon_cmd)
+            _sin.close()
+            _sout.read()
+            _serr.read()
+            time.sleep(2.0)
+
+            # 3. 验证
+            _sin, pgrep_out, _serr = ssh.exec_command(
+                "pgrep -f 'atlas_upload_client.py.*--heartbeat' || true"
+            )
+            pids = pgrep_out.read().decode("utf-8", errors="ignore").strip()
+            pgrep_out.close()
+
+            if pids:
+                time.sleep(1.5)
+                _sin, log_out, _serr = ssh.exec_command(
+                    f"tail -20 {log_file} 2>/dev/null || echo '(日志不可读)'"
+                )
+                log_tail = log_out.read().decode("utf-8", errors="ignore")
+                log_out.close()
+                return jsonify({
+                    "ok": True,
+                    "message": f"已在板端后台启动定时心跳（PID: {pids}），每 10 秒上报一次设备状态。",
+                    "command": daemon_cmd,
+                    "pid": pids,
+                    "output": log_tail,
+                })
+            else:
+                _sin, log_out, _serr = ssh.exec_command(
+                    f"tail -30 {log_file} 2>/dev/null || echo '(日志文件不存在)'"
+                )
+                log_tail = log_out.read().decode("utf-8", errors="ignore")
+                log_out.close()
+                return jsonify({
+                    "ok": False,
+                    "error": "心跳进程未能成功启动。",
+                    "command": daemon_cmd,
+                    "log_tail": log_tail,
+                }), 500
+
         elif action == "stop_heartbeat":
-            cmd = f'pkill -f "atlas_upload_client.py.*--heartbeat"'
-            ssh.exec_command(cmd)
-            return jsonify({"ok": True, "message": "已向板端发送停止心跳命令", "command": cmd})
-            
+            _sin, _sout, _serr = ssh.exec_command(
+                "pkill -f 'atlas_upload_client.py.*--heartbeat' || true"
+            )
+            _sout.read()
+            return jsonify({"ok": True, "message": "已停止板端心跳进程。"})
+
         elif action == "trigger_heartbeat":
-            cmd = f'/usr/local/miniconda3/bin/python3 /home/{board_user}/atlas_upload_client.py --server {server_url} --heartbeat'
+            # 显式加载 Ascend 环境变量
+            cmd = (
+                f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
+                f"/usr/local/miniconda3/bin/python3 -u {board_home}/atlas_upload_client.py "
+                f"--server {server_url} --heartbeat"
+            )
             stdin, stdout, stderr = ssh.exec_command(cmd)
             out_msg = stdout.read().decode('utf-8', errors='ignore')
             err_msg = stderr.read().decode('utf-8', errors='ignore')
             return jsonify({
-                "ok": True, 
-                "message": "已执行单次实时心跳上报", 
-                "command": cmd, 
-                "output": out_msg, 
+                "ok": True,
+                "message": "已执行单次实时心跳上报",
+                "command": cmd,
+                "output": out_msg,
                 "error_output": err_msg
             })
-            
+
         elif action == "run_yolo":
-            cmd = f'cd /home/{board_user}/samples/notebooks/01-yolov5 && /usr/local/miniconda3/bin/python3 atlas_yolo_detect_and_upload.py --image world_cup.jpg --model yolo.om --labels coco_names.txt --server {server_url} --upload --force-cloud'
+            yolo_dir = f"{board_home}/samples/notebooks/01-yolov5"
+            python_bin = "/usr/local/miniconda3/bin/python3"
+
+            # 1. 显式 source set_env.sh 以加载 Ascend 环境变量；
+            # 2. 清除 root 残留的 output 文件，防止覆写权限问题。
+            cmd = (
+                f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
+                f"cd {yolo_dir} && "
+                f"rm -f detections.json summary.json annotated.jpg && "
+                f"{python_bin} -u atlas_yolo_detect_and_upload.py"
+                f" --image world_cup.jpg --model yolo.om --labels coco_names.txt"
+                f" --server {server_url} --upload --force-cloud"
+            )
+
             stdin, stdout, stderr = ssh.exec_command(cmd)
             out_msg = stdout.read().decode('utf-8', errors='ignore')
             err_msg = stderr.read().decode('utf-8', errors='ignore')
             return jsonify({
-                "ok": True, 
-                "message": "已执行板端 YOLO 推理并上报", 
-                "command": cmd, 
-                "output": out_msg, 
+                "ok": True,
+                "message": "已执行板端 YOLO 推理并上报",
+                "command": f"cd {yolo_dir} && python3 atlas_yolo_detect_and_upload.py ...",
+                "output": out_msg,
                 "error_output": err_msg
             })
             
