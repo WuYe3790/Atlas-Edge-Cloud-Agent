@@ -80,6 +80,13 @@ createApp({
     const boardConsoleLog = ref('');
     const boardConsoleLoading = ref(false);
 
+    // Slide-out terminal drawer specific state
+    const isTerminalOpen = ref(false);
+    const terminalLogs = ref('');
+    const terminalLoading = ref(false);
+    const sshStatus = ref('disconnected');
+    const sshStatusText = ref('未连接');
+
     // Helpers
     const generateId = () => Math.random().toString(36).substring(2, 15);
     
@@ -521,11 +528,53 @@ createApp({
       activeTaskDetail.value = null;
     };
 
+    const scrollTerminalToBottom = () => {
+      nextTick(() => {
+        const terminalBody = document.querySelector(".terminal-body");
+        if (terminalBody) {
+          terminalBody.scrollTop = terminalBody.scrollHeight;
+        }
+      });
+    };
+
+    const autoConnectSSH = async () => {
+      sshStatus.value = 'connecting';
+      sshStatusText.value = '正在连接开发板 (SSH: 192.168.0.2)...';
+      terminalLogs.value += `[${new Date().toLocaleTimeString()}] [系统初始化] 正在尝试自动连接开发板...\n`;
+      scrollTerminalToBottom();
+      
+      try {
+        const response = await fetch("/api/edge/ssh-connect", {
+          method: "POST"
+        });
+        const data = await response.json();
+        if (response.ok && data.ok) {
+          sshStatus.value = 'connected';
+          sshStatusText.value = `已连接 | ${data.board_user}@${data.board_ip}`;
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [成功] ${data.message}\n`;
+        } else {
+          sshStatus.value = 'failed';
+          sshStatusText.value = `连接失败 | ${data.board_user || 'root'}@${data.board_ip || '192.168.0.2'}`;
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] ${data.error || '无法建立 SSH 连接'}\n`;
+        }
+      } catch (err) {
+        sshStatus.value = 'failed';
+        sshStatusText.value = '连接异常 (网络错误)';
+        terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] 无法连接到测试端点: ${err.message || err}\n`;
+      }
+      scrollTerminalToBottom();
+    };
+
+    const retrySSHConnection = async () => {
+      terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [手动重试] 重新尝试 SSH 连接...\n`;
+      await autoConnectSSH();
+    };
+
     const executeBoardControl = async (action) => {
-      boardConsoleTitle.value = action === 'run_yolo' ? '板端运行 YOLO 推理与上报任务流' : '板端设备物理控制控制台';
-      boardConsoleLog.value = '正在通过 SSH 连接开发板并执行操作...\n';
-      isBoardConsoleOpen.value = true;
-      boardConsoleLoading.value = true;
+      const actionName = action === 'run_yolo' ? '运行 YOLO 推理' : action === 'start_heartbeat' ? '启动后台心跳' : action === 'stop_heartbeat' ? '停止后台心跳' : '即时心跳上报';
+      terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [执行操作] 开始执行: ${actionName}...\n`;
+      terminalLoading.value = true;
+      scrollTerminalToBottom();
 
       try {
         const response = await fetch("/api/edge/control", {
@@ -534,28 +583,29 @@ createApp({
           body: JSON.stringify({ action })
         });
         const data = await response.json();
-        boardConsoleLoading.value = false;
+        terminalLoading.value = false;
         
         if (data.ok) {
-          boardConsoleLog.value += `[成功] ${data.message}\n`;
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [成功] ${data.message}\n`;
           if (data.command) {
-            boardConsoleLog.value += `执行命令: ${data.command}\n`;
+            terminalLogs.value += `执行命令: ${data.command}\n`;
           }
           if (data.output) {
-            boardConsoleLog.value += `\n--- 命令行标准输出 (STDOUT) ---\n${data.output}\n`;
+            terminalLogs.value += `\n--- 命令行标准输出 (STDOUT) ---\n${data.output}\n`;
           }
           if (data.error_output) {
-            boardConsoleLog.value += `\n--- 命令行错误输出 (STDERR) ---\n${data.error_output}\n`;
+            terminalLogs.value += `\n--- 命令行错误输出 (STDERR) ---\n${data.error_output}\n`;
           }
           
           await loadEdgeStatus();
         } else {
-          boardConsoleLog.value += `[错误] ${data.error || '执行失败'}\n`;
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] ${data.error || '执行失败'}\n`;
         }
       } catch (err) {
-        boardConsoleLoading.value = false;
-        boardConsoleLog.value += `[网络错误] 无法连接到服务器进行控制: ${err.message || err}\n`;
+        terminalLoading.value = false;
+        terminalLogs.value += `[${new Date().toLocaleTimeString()}] [网络错误] 无法连接到服务器进行控制: ${err.message || err}\n`;
       }
+      scrollTerminalToBottom();
     };
 
     // Watchers & Life Cycle Hooks
@@ -602,6 +652,9 @@ createApp({
       // Load Edge tasks/devices
       await loadEdgeStatus();
       
+      // Auto-connect SSH to board on startup
+      autoConnectSSH();
+      
       // Poll Edge tasks periodically (every 4 seconds)
       setInterval(() => {
         loadEdgeStatus();
@@ -639,6 +692,11 @@ createApp({
       boardConsoleTitle,
       boardConsoleLog,
       boardConsoleLoading,
+      isTerminalOpen,
+      terminalLogs,
+      terminalLoading,
+      sshStatus,
+      sshStatusText,
       
       selectConversation,
       deleteConversation,
@@ -652,7 +710,8 @@ createApp({
       runAnalysis,
       openTaskModal,
       closeTaskModal,
-      executeBoardControl
+      executeBoardControl,
+      retrySSHConnection
     };
   }
 }).mount('#appShell');

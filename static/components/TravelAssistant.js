@@ -114,7 +114,7 @@ export default {
       this.$el.querySelectorAll('.message.assistant:not(.loading)').forEach((el) => {
         const msgId = el.dataset.msgId;
         if (!msgId) return;
-        const msg = this.messages.find(m => m.id === msgId);
+        const msg = this.messages.find(m => String(m.id) === String(msgId));
         if (msg && msg.metaData && window.appendMeta) {
           // Prevent duplicate appending
           if (!el.querySelector('.message-meta') && !el.querySelector('.trace-panel')) {

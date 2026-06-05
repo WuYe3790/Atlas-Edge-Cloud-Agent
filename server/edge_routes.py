@@ -1071,3 +1071,37 @@ def edge_control():
         return jsonify({"ok": False, "error": f"SSH 远程执行失败: {str(e)}"}), 500
     finally:
         ssh.close()
+
+
+@edge_bp.post("/api/edge/ssh-connect")
+def test_ssh_connection():
+    board_ip = os.getenv("ATLAS_BOARD_IP", "192.168.0.2").strip()
+    board_user = os.getenv("ATLAS_BOARD_USER", "root").strip()
+    board_password = os.getenv("ATLAS_BOARD_PASSWORD", "Mind@123").strip()
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(
+            hostname=board_ip,
+            username=board_user,
+            password=board_password,
+            timeout=5
+        )
+        _sin, stdout, _serr = ssh.exec_command("uname -a")
+        uname = stdout.read().decode('utf-8', errors='ignore').strip()
+        ssh.close()
+        return jsonify({
+            "ok": True,
+            "message": f"成功连接到开发板 (SSH Connection Successful)\n系统信息: {uname}",
+            "board_ip": board_ip,
+            "board_user": board_user
+        })
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": f"无法连接到开发板: {str(e)}",
+            "board_ip": board_ip,
+            "board_user": board_user
+        }), 500
+

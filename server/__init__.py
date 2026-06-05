@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask
+from flask import Flask, request
 from dotenv import load_dotenv
 
 from server.bootstrap import PROJECT_ROOT, configure_runtime
@@ -29,4 +29,14 @@ def create_app() -> Flask:
     app.register_blueprint(conversation_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(edge_bp)
+
+    @app.after_request
+    def add_no_cache_to_api(response):
+        if request.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
     return app
+
