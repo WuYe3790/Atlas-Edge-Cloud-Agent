@@ -3836,8 +3836,6 @@ textarea {
 
 /* ====== Siri Debug Button & Terminal Drawer ====== */
 .siri-debug-btn {
-  grid-column: 2;
-  grid-row: 1;
   position: absolute;
   bottom: 24px;
   right: 24px;
@@ -3891,8 +3889,6 @@ textarea {
 }
 
 .terminal-drawer {
-  grid-column: 2;
-  grid-row: 1;
   position: absolute;
   top: 0;
   right: 0;

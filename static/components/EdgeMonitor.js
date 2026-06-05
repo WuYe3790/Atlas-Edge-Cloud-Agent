@@ -4,13 +4,28 @@ export default {
   name: 'EdgeMonitor',
   props: {
     tasks: { type: Array, default: () => [] },
-    sidebarCollapsed: { type: Boolean, default: false }
+    sidebarCollapsed: { type: Boolean, default: false },
+    isTerminalOpen: { type: Boolean, default: false },
+    terminalLogs: { type: String, default: '' },
+    terminalLoading: { type: Boolean, default: false },
+    sshStatus: { type: String, default: 'disconnected' },
+    sshStatusText: { type: String, default: '未连接' }
   },
-  emits: ['open-task', 'run-analysis', 'refresh-tasks', 'toggle-sidebar'],
+  emits: ['open-task', 'run-analysis', 'refresh-tasks', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh'],
   data() {
     return {
       expandedTaskId: null
     };
+  },
+  updated() {
+    if (this.isTerminalOpen) {
+      this.$nextTick(() => {
+        const terminalBody = this.$refs.terminalBody;
+        if (terminalBody) {
+          terminalBody.scrollTop = terminalBody.scrollHeight;
+        }
+      });
+    }
   },
   methods: {
     toggleExpand(taskId) {
@@ -78,7 +93,7 @@ export default {
     }
   },
   template: `
-    <section class="edge-cloud-panel" style="display: flex; flex-direction: column;">
+    <section class="edge-cloud-panel" style="display: flex; flex-direction: column; position: relative; overflow: hidden;">
       <header class="chat-header">
         <div class="chat-header-title-area">
           <button v-if="sidebarCollapsed" class="sidebar-toggle-btn expand-btn" type="button" title="展开侧边栏" @click="$emit('toggle-sidebar')">
@@ -247,6 +262,51 @@ export default {
               
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Siri-style terminal debug button inside EdgeMonitor -->
+      <button 
+        class="siri-debug-btn" 
+        @click="$emit('toggle-terminal')" 
+        :class="{ open: isTerminalOpen }"
+        type="button"
+        title="打开板端 SSH 调试终端"
+      >
+        <div class="siri-glow"></div>
+        <svg class="siri-icon" viewBox="0 0 24 24" width="22" height="22">
+          <path fill="currentColor" d="M12 2A10 10 0 1 0 22 12 A10 10 0 0 0 12 2 Z M13 17 H11 V15 H13 V17 Z M13 13 H11 V7 H13 V13 Z"/>
+        </svg>
+      </button>
+
+      <!-- Terminal Drawer Panel inside EdgeMonitor -->
+      <div 
+        class="terminal-drawer" 
+        :class="{ open: isTerminalOpen }"
+      >
+        <div class="drawer-header">
+          <div class="drawer-title">
+            <span class="terminal-dot" :class="sshStatus"></span>
+            <span>板端 SSH 运行终端</span>
+          </div>
+          <div class="drawer-actions">
+            <button class="drawer-reconnect-btn" @click="$emit('retry-ssh')" :disabled="sshStatus === 'connecting'">
+              {{ sshStatus === 'connecting' ? '连接中...' : '重新连接' }}
+            </button>
+            <button class="drawer-close-btn" @click="$emit('toggle-terminal')">&times;</button>
+          </div>
+        </div>
+        
+        <!-- SSH Connection Status Bar -->
+        <div class="terminal-status-bar" :class="sshStatus">
+          <span class="status-indicator"></span>
+          <span class="status-text" v-text="sshStatusText"></span>
+        </div>
+
+        <!-- Logs Area -->
+        <div class="terminal-body" ref="terminalBody">
+          <pre class="terminal-log" v-text="terminalLogs"></pre>
+          <span v-if="terminalLoading" class="cursor-blink" style="color: #38bdf8; font-family: monospace; font-size: 12px; margin-left: 20px;">_</span>
         </div>
       </div>
     </section>

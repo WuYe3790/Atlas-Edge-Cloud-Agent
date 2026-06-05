@@ -1,8 +1,8 @@
 import { createApp, ref, reactive, onMounted, watch, nextTick } from 'vue';
-import SidebarComponent from './components/SidebarComponent.js?v=20260605-env-fix';
-import TravelAssistant from './components/TravelAssistant.js?v=20260605-env-fix';
-import EdgeMonitor from './components/EdgeMonitor.js?v=20260605-env-fix';
-import TaskModal from './components/TaskModal.js?v=20260605-env-fix';
+import SidebarComponent from './components/SidebarComponent.js?v=20260605-terminal-drawer-fix';
+import TravelAssistant from './components/TravelAssistant.js?v=20260605-terminal-drawer-fix';
+import EdgeMonitor from './components/EdgeMonitor.js?v=20260605-terminal-drawer-fix';
+import TaskModal from './components/TaskModal.js?v=20260605-terminal-drawer-fix';
 
 createApp({
   components: {
