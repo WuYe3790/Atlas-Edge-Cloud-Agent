@@ -1466,10 +1466,10 @@ def main():
         print("Error: Video has 0 frames", file=sys.stderr)
         sys.exit(3)
 
-    # 动态抽帧 — 基于视频时长，全面增加帧数
-    if duration < 10:     target = min(total, 12)
-    elif duration < 60:   target = min(total, 20)
-    else:                 target = min(total, 30)
+    # 动态抽帧 — 基于视频时长，全面增加帧数确保时序连贯
+    if duration < 10:     target = min(total, 20)
+    elif duration < 60:   target = min(total, 40)
+    else:                 target = min(total, 60)
 
     n = target
     step = total / n

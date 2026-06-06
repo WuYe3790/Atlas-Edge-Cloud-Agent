@@ -1,8 +1,8 @@
 import { createApp, ref, reactive, onMounted, watch, nextTick } from 'vue';
-import SidebarComponent from './components/SidebarComponent.js?v=20260606-trace-fix';
-import TravelAssistant from './components/TravelAssistant.js?v=20260606-trace-fix';
-import EdgeMonitor from './components/EdgeMonitor.js?v=20260606-trace-fix';
-import TaskModal from './components/TaskModal.js?v=20260606-trace-fix';
+import SidebarComponent from './components/SidebarComponent.js?v=20260607-clean';
+import TravelAssistant from './components/TravelAssistant.js?v=20260607-clean';
+import EdgeMonitor from './components/EdgeMonitor.js?v=20260607-clean';
+import TaskModal from './components/TaskModal.js?v=20260607-clean';
 
 createApp({
   components: {
@@ -449,7 +449,7 @@ createApp({
     const loadEdgeStatus = async () => {
       try {
         const [tasksResponse, statusResponse] = await Promise.all([
-          fetch(`/api/edge/tasks?limit=24&_t=${Date.now()}`),
+          fetch(`/api/edge/tasks?limit=100&_t=${Date.now()}`),
           fetch(`/api/edge/status?_t=${Date.now()}`)
         ]);
         const tasksData = await tasksResponse.json();

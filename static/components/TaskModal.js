@@ -43,6 +43,21 @@ export default {
       }
     }
   },
+  computed: {
+    zoomFrameCount() {
+      var evt = this.taskDetail && this.taskDetail.event;
+      var frames = evt && evt.frames;
+      return (Array.isArray(frames) && frames.length) || 0;
+    },
+    zoomSrc() {
+      if (this.zoomFrameCount > 0) {
+        return this.taskDetail.event.frames[this.activeFrameIdx].annotated_image_url;
+      }
+      var evt = this.taskDetail && this.taskDetail.event;
+      return (evt && evt.annotated_image_url) || '';
+    },
+    hasMultipleFrames() { return this.zoomFrameCount > 1; }
+  },
   template: `
     <div class="modal-overlay" :hidden="!isOpen" @click="$emit('close')" style="z-index: 1000;">
       <div class="modal-dialog" @click.stop="" style="max-height: 90vh; overflow-y: auto;">
@@ -99,11 +114,11 @@ export default {
               <div v-if="taskDetail.media_type === 'video' && taskDetail.event?.frames && taskDetail.event.frames.length" style="display:flex; flex-direction:column; gap:8px;">
                 <div class="modal-image-container" style="position: relative; cursor: zoom-in;" @click="isZoomed = true">
                   <img class="modal-annotated-image" 
-                       :src="taskDetail.event.frames[activeFrameIdx || 0].annotated_image_url" 
+                       :src="taskDetail.event.frames[activeFrameIdx].annotated_image_url" 
                        alt="YOLO Annotated Result" 
                        style="max-width:100%; border-radius:8px; display:block; margin:0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
                   <div class="image-zoom-hint" style="position: absolute; right: 10px; bottom: 10px; background: rgba(0,0,0,0.65); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none;">
-                    🔍 点击放大帧 {{ (activeFrameIdx || 0) + 1 }}
+                    🔍 点击放大帧 {{ (activeFrameIdx) + 1 }}
                   </div>
                 </div>
                 <!-- Thumbnails Slider -->
@@ -117,8 +132,8 @@ export default {
                          borderRadius: '6px',
                          overflow: 'hidden',
                          cursor: 'pointer',
-                         border: (activeFrameIdx || 0) === fIdx ? '2px solid var(--accent)' : '1px solid var(--line)',
-                         opacity: (activeFrameIdx || 0) === fIdx ? '1' : '0.7',
+                         border: (activeFrameIdx) === fIdx ? '2px solid var(--accent)' : '1px solid var(--line)',
+                         opacity: (activeFrameIdx) === fIdx ? '1' : '0.7',
                          transition: 'all 0.15s ease'
                        }">
                     <img :src="frame.annotated_image_url" style="width:100%; height:100%; object-fit:cover;">
@@ -220,14 +235,28 @@ export default {
               </div>
             </section>
 
-            <!-- 8. Cloud Agent Analysis -->
+            <!-- 8. Cloud Agent Analysis (DeepSeek text supplement) -->
             <section v-if="taskDetail.analysis && taskDetail.analysis.answer" class="modal-section">
-              <h4 class="modal-section-title">🤖 云端 Agent 智能研判</h4>
+              <h4 class="modal-section-title">🤖 云端 Agent 综合研判</h4>
               <div class="modal-analysis-content" v-html="renderMarkdown(taskDetail.analysis.answer)" style="line-height: 1.6; font-size: 13px; color: var(--text); background: rgba(59,130,246,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(59,130,246,0.1);"></div>
             </section>
 
+            <!-- 8b. SenseNova Multimodal Visual Analysis (separate panel) -->
+            <section v-if="taskDetail.analysis && taskDetail.analysis.vision_analysis && taskDetail.analysis.vision_analysis.answer" class="modal-section">
+              <h4 class="modal-section-title" style="display:flex; align-items:center; gap:8px;">
+                <span>🎬 商汤 SenseNova 多模态视觉分析</span>
+                <span style="font-weight:400; font-size:11px; color:var(--muted); background:#fef3c7; padding:2px 8px; border-radius:999px;">基于 YOLO 标注图</span>
+              </h4>
+              <div v-html="renderMarkdown(taskDetail.analysis.vision_analysis.answer)" style="line-height: 1.6; font-size: 13px; color: var(--text); background: rgba(245,158,11,0.03); padding: 12px; border-radius: 8px; border: 1px solid rgba(245,158,11,0.2);"></div>
+              <div style="margin-top:8px; font-size:11px; color:var(--muted); display:flex; gap:16px;">
+                <span>模型: {{ taskDetail.analysis.vision_analysis.model || 'sensenova-6.7-flash-lite' }}</span>
+                <span>Token 用量: {{ taskDetail.analysis.vision_analysis.usage?.total_tokens || taskDetail.analysis.vision_analysis.trace?.[0]?.usage?.total_tokens || 'N/A' }}</span>
+                <span>输入: {{ taskDetail.analysis.frame_count || taskDetail.analysis.vision_analysis.frame_count || 1 }} 帧 YOLO 标注图</span>
+                <span v-if="taskDetail.analysis.media_type === 'video'">类型: 视频分析</span>
+              </div>
+            </section>
+
             <!-- 9. Agent Execution Trace -->
-                        <!-- 9. Agent Execution Trace -->
             <section v-if="taskDetail.analysis && taskDetail.analysis.trace && taskDetail.analysis.trace.length" class="modal-section">
               <h4 class="modal-section-title">&#x1f9e0; 智能体执行追踪 (Agent Trace)</h4>
               <div class="trace-timeline" style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
@@ -258,10 +287,10 @@ export default {
                     <div class="trace-node-details" style="font-size: 12px; color: var(--muted); word-break: break-all;">
                       {{ item.type === 'vision_analysis' ? '模型: ' + (item.model || 'sensenova-6.7-flash-lite') + ' | 状态: ' + (item.status || 'success') + ' | 输入: ' + (item.media_type === 'video' ? (item.frame_count || '?') + ' 帧标注图' : '单张标注图') : (item.type === 'tool_call' ? '参数: ' + JSON.stringify(item.args) : '状态: ' + (item.status || 'Success')) }}
                     </div>
-                    <div v-if="(item.type === 'tool_call' || item.type === 'vision_analysis') && item.result"
+                    <div v-if="item.type === 'tool_call' && item.result"
                          class="trace-node-details"
                          style="font-size: 12px; color: var(--text); margin-top: 4px; word-break: break-all;">
-                      <strong>返回:</strong> {{ item.result.length > 200 ? item.result.substring(0, 200) + '...' : item.result }}
+                      <strong>返回:</strong> {{ item.result.length > 500 ? item.result.substring(0, 500) + '...' : item.result }}
                     </div>
                   </div>
                 </div>
@@ -280,9 +309,14 @@ export default {
       </div>
       
       <!-- Zoom Lightbox -->
-      <div v-if="isZoomed" class="zoom-lightbox" @click="isZoomed = false" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.95); display: flex; align-items: center; justify-content: center; z-index: 3000; cursor: zoom-out;">
-        <img :src="taskDetail.media_type === 'video' && taskDetail.event?.frames && taskDetail.event.frames.length ? taskDetail.event.frames[activeFrameIdx || 0].annotated_image_url : taskDetail.event.annotated_image_url" style="max-width: 95vw; max-height: 95vh; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
-        <button style="position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.25); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.2s;">&times;</button>
+      <div v-if="isZoomed" class="zoom-lightbox" @click.stop="isZoomed = false" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.95); display: flex; align-items: center; justify-content: center; z-index: 3000; cursor: zoom-out;">
+                @click.stop="activeFrameIdx = activeFrameIdx - 1"
+                @click.stop="activeFrameIdx = activeFrameIdx + 1"
+        <img :src="zoomSrc" @click.stop style="max-width: 95vw; max-height: 95vh; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+        <div style="position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.6); font-size: 13px;">
+          {{ hasMultipleFrames ? '帧 ' + (activeFrameIdx + 1) + ' / ' + zoomFrameCount : '' }}
+        </div>
+        <button @click.stop="isZoomed = false" style="position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.25); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.2s;">&times;</button>
       </div>
     </div>
   `

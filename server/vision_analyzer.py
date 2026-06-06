@@ -42,7 +42,7 @@ class VisionConfig:
         self.temperature: float = float(os.getenv("VISION_TEMPERATURE", "0.3"))
         self.timeout_image: int = int(os.getenv("VISION_TIMEOUT_IMAGE", "120"))
         self.timeout_video: int = int(os.getenv("VISION_TIMEOUT_VIDEO", "300"))
-        self.max_video_frames: int = int(os.getenv("VISION_MAX_VIDEO_FRAMES", "16"))
+        self.max_video_frames: int = int(os.getenv("VISION_MAX_VIDEO_FRAMES", "60"))
 
     @property
     def is_available(self) -> bool:

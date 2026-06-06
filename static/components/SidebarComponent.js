@@ -329,10 +329,9 @@ export default {
                 <span style="font-size:11.5px; font-weight:700; color:var(--text)">强制云端大模型推理</span>
                 <span style="font-size:9.5px; color:var(--muted)">开启后跳过边端决策评估</span>
               </div>
-              <label class="switch-toggle" style="position: relative; display: inline-block; width: 34px; height: 20px; cursor: pointer;">
-                <input type="checkbox" :checked="forceCloud" @change="$emit('update:forceCloud', $event.target.checked)" style="opacity: 0; width: 0; height: 0;">
-                <span class="switch-slider" :style="{ position: 'absolute', cursor: 'pointer', top: '0', left: '0', right: '0', bottom: '0', backgroundColor: forceCloud ? '#3b82f6' : '#cbd5e1', transition: '.3s', borderRadius: '20px' }"></span>
-                <span :style="{ position: 'absolute', cursor: 'pointer', top: '2px', left: forceCloud ? '16px' : '2px', width: '16px', height: '16px', backgroundColor: '#fff', borderRadius: '50%', transition: '.3s' }"></span>
+              <label class="switch-toggle">
+                <input type="checkbox" :checked="forceCloud" @change="$emit('update:forceCloud', $event.target.checked)">
+                <span class="switch-slider"></span>
               </label>
             </div>
             <div class="board-control-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
