@@ -227,8 +227,9 @@ export default {
             </section>
 
             <!-- 9. Agent Execution Trace -->
+                        <!-- 9. Agent Execution Trace -->
             <section v-if="taskDetail.analysis && taskDetail.analysis.trace && taskDetail.analysis.trace.length" class="modal-section">
-              <h4 class="modal-section-title">🧠 智能体执行追踪 (Agent Trace)</h4>
+              <h4 class="modal-section-title">&#x1f9e0; 智能体执行追踪 (Agent Trace)</h4>
               <div class="trace-timeline" style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
                 <div v-for="(item, idx) in taskDetail.analysis.trace" :key="idx"
                      class="trace-node"
@@ -251,7 +252,7 @@ export default {
                         {{ item.type === 'vision_analysis' ? '🎬 多模态视觉分析 (SenseNova ' + (item.media_type === 'video' ? '视频' : '图片') + ' ' + (item.frame_count || '') + '帧): ' + (item.model || 'sensenova-6.7-flash-lite') : (item.type === 'tool_call' ? '调用工具: ' + item.tool : '模型响应: ' + (item.model || 'unknown')) }}
                       </span>
                       <span class="trace-node-duration" style="font-size: 11px; color: var(--muted);">
-                        {{ item.type === 'vision_analysis' ? (item.usage?.total_tokens ? 'Token: ' + item.usage.total_tokens : '') : (item.type === 'tool_call' ? (item.duration_ms ? item.duration_ms + 'ms' : '') : (item.usage?.total_tokens ? 'Token 消耗: ' + item.usage.total_tokens : '')) }}
+                        {{ item.type === 'vision_analysis' ? (item.usage && item.usage.total_tokens ? 'Token: ' + item.usage.total_tokens : '') : (item.type === 'tool_call' ? (item.duration_ms ? item.duration_ms + 'ms' : '') : (item.usage && item.usage.total_tokens ? 'Token 消耗: ' + item.usage.total_tokens : '')) }}
                       </span>
                     </div>
                     <div class="trace-node-details" style="font-size: 12px; color: var(--muted); word-break: break-all;">
@@ -262,8 +263,11 @@ export default {
                          style="font-size: 12px; color: var(--text); margin-top: 4px; word-break: break-all;">
                       <strong>返回:</strong> {{ item.result.length > 200 ? item.result.substring(0, 200) + '...' : item.result }}
                     </div>
-</div>
+                  </div>
+                </div>
+              </div>
             </section>
+
             
           </div>
         </div>
