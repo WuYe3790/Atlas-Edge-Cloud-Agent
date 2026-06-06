@@ -17,8 +17,20 @@ export default {
       expandedTaskId: null,
       isDragging: false,
       uploading: false,
-      isUploadPanelOpen: false
+      isUploadPanelOpen: false,
+      showConfirmModal: false,
+      uploadedFilePath: '',
+      activeFrameIdx: 0,
+      isZoomed: false,
+      zoomedImageUrl: ''
     };
+  },
+  watch: {
+    expandedTaskId() {
+      this.activeFrameIdx = 0;
+      this.isZoomed = false;
+      this.zoomedImageUrl = '';
+    }
   },
   updated() {
     if (this.isTerminalOpen) {
@@ -131,14 +143,8 @@ export default {
         
         if (data.ok) {
           this.$emit('log', `[${new Date().toLocaleTimeString()}] [成功] ${data.message} | 板端路径: ${data.file_path}\n`);
-          const runNow = confirm(`本地媒体文件上传成功！\n板端路径: ${data.file_path}\n\n是否立即对该文件运行板端 YOLO 推理与云端多模态分析？`);
-          if (runNow) {
-            this.$emit('log', `[${new Date().toLocaleTimeString()}] [自动推理] 用户确认立即执行推理任务...\n`);
-            this.$emit('run-uploaded-yolo', data.file_path);
-          } else {
-            this.$emit('log', `[${new Date().toLocaleTimeString()}] [提示] 用户选择暂不执行推理。您可以日后通过物理控制面板选择此文件运行。\n`);
-            alert("文件已上传成功！你可以随时通过物理控制面板中的'远程运行 YOLO 推理'选择此文件运行。");
-          }
+          this.uploadedFilePath = data.file_path;
+          this.showConfirmModal = true;
           this.$emit('upload-success');
         } else {
           this.$emit('log', `[${new Date().toLocaleTimeString()}] [错误] 文件上传失败: ${data.error || '传输失败'}\n`);
@@ -148,6 +154,25 @@ export default {
         this.uploading = false;
         this.$emit('log', `[${new Date().toLocaleTimeString()}] [网络错误] 文件上传异常: ${err.message || err}\n`);
         alert(`网络异常: ${err.message || err}`);
+      }
+    },
+    confirmInference() {
+      this.showConfirmModal = false;
+      this.$emit('log', `[${new Date().toLocaleTimeString()}] [自动推理] 用户确认立即执行推理任务...\n`);
+      this.$emit('run-uploaded-yolo', this.uploadedFilePath);
+    },
+    cancelInference() {
+      this.showConfirmModal = false;
+      this.$emit('log', `[${new Date().toLocaleTimeString()}] [提示] 用户选择暂不执行推理。您可以日后通过物理控制面板选择此文件运行。\n`);
+    },
+    openZoom(task) {
+      if (task.media_type === 'video' && task.event?.frames && task.event.frames.length) {
+        this.zoomedImageUrl = task.event.frames[this.activeFrameIdx || 0].annotated_image_url;
+      } else {
+        this.zoomedImageUrl = task.event?.annotated_image_url || '';
+      }
+      if (this.zoomedImageUrl) {
+        this.isZoomed = true;
       }
     }
   },
@@ -226,8 +251,11 @@ export default {
               <div class="history-item-header" @click="toggleExpand(task.id)">
                 <div class="header-left">
                   <span class="status-dot" :class="task.status === 'completed' ? 'completed' : 'received'"></span>
-                  <strong class="task-title">{{ task.image_id || task.event?.image_id || 'world_cup.jpg' }}</strong>
-                  <span class="task-device-id">设备: {{ task.device_id || task.event?.device_id || 'unknown' }}</span>
+                  <span :style="task.media_type === 'video' ? 'background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;' : 'background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0;'" style="font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: sans-serif; margin-right: 6px; display: inline-block; vertical-align: middle;">
+                    {{ task.media_type === 'video' ? '🎥 视频' : '🖼️ 图片' }}
+                  </span>
+                  <strong class="task-title" style="vertical-align: middle;">{{ task.image_id || task.event?.image_id || 'world_cup.jpg' }}</strong>
+                  <span class="task-device-id" style="vertical-align: middle;">设备: {{ task.device_id || task.event?.device_id || 'unknown' }}</span>
                   <span v-if="task.created_at" class="task-time" :title="'绝对时间: ' + task.created_at">
                     ⏰ {{ getRelativeTime(task.created_at) }}
                   </span>
@@ -250,19 +278,57 @@ export default {
                 <div class="content-grid">
                   <!-- Left column: Image & Caption -->
                   <div class="content-left">
-                    <div class="edge-task-image-container" style="height: 200px;">
-                      <img v-if="task.event?.annotated_image_url" 
-                           class="edge-task-image" 
-                           :src="task.event.annotated_image_url" 
-                           alt="YOLO Result" 
-                           loading="lazy">
-                      <div v-else class="edge-task-image-fallback">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                        <span>无有效标注图</span>
+                    <!-- Video Mode Frames Slider -->
+                    <div v-if="task.media_type === 'video' && task.event?.frames && task.event.frames.length" style="display:flex; flex-direction:column; gap:8px;">
+                      <div class="edge-task-image-container" style="height: 200px; position: relative; cursor: zoom-in;" @click="openZoom(task)">
+                        <img class="edge-task-image" 
+                             :src="task.event.frames[activeFrameIdx || 0].annotated_image_url" 
+                             alt="YOLO Annotated Result" 
+                             style="max-width:100%; height: 100%; border-radius:8px; display:block; margin:0 auto; object-fit: contain;">
+                        <div class="image-zoom-hint" style="position: absolute; right: 10px; bottom: 10px; background: rgba(0,0,0,0.65); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none;">
+                          🔍 点击放大帧 {{ (activeFrameIdx || 0) + 1 }}
+                        </div>
+                      </div>
+                      <!-- Thumbnails Slider -->
+                      <div style="display:flex; gap:8px; overflow-x:auto; padding:4px 0; max-width: 100%;">
+                        <div v-for="(frame, fIdx) in task.event.frames" 
+                             :key="fIdx" 
+                             @click="activeFrameIdx = fIdx"
+                             :style="{
+                               flex: '0 0 70px',
+                               height: '50px',
+                               borderRadius: '6px',
+                               overflow: 'hidden',
+                               cursor: 'pointer',
+                               border: (activeFrameIdx || 0) === fIdx ? '2px solid var(--accent)' : '1px solid var(--line)',
+                               opacity: (activeFrameIdx || 0) === fIdx ? '1' : '0.7',
+                               transition: 'all 0.15s ease'
+                             }">
+                          <img :src="frame.annotated_image_url" style="width:100%; height:100%; object-fit:cover;">
+                        </div>
                       </div>
                     </div>
-                    <div style="text-align: center; margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.4;">
-                      分析源图像: <code>/home/HwHiAiUser/samples/notebooks/01-yolov5/world_cup.jpg</code>
+                    
+                    <!-- Image Mode -->
+                    <div v-else style="display:flex; flex-direction:column; gap:8px;">
+                      <div class="edge-task-image-container" style="height: 200px; position: relative; cursor: zoom-in;" @click="openZoom(task)">
+                        <img v-if="task.event?.annotated_image_url" 
+                             class="edge-task-image" 
+                             :src="task.event.annotated_image_url" 
+                             alt="YOLO Result" 
+                             loading="lazy">
+                        <div v-else class="edge-task-image-fallback">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                          <span>无有效标注图</span>
+                        </div>
+                        <div v-if="task.event?.annotated_image_url" class="image-zoom-hint" style="position: absolute; right: 10px; bottom: 10px; background: rgba(0,0,0,0.65); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none;">
+                          🔍 点击放大
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.4; word-break: break-all;">
+                      分析源: <code>{{ task.event?.source_path || task.image_id || '/home/HwHiAiUser/samples/notebooks/01-yolov5/world_cup.jpg' }}</code>
                     </div>
                   </div>
                   
@@ -408,6 +474,43 @@ export default {
           <pre class="terminal-log" v-text="terminalLogs"></pre>
           <span v-if="terminalLoading" class="cursor-blink" style="color: #38bdf8; font-family: monospace; font-size: 12px; margin-left: 20px;">_</span>
         </div>
+      </div>
+
+      <!-- Custom Upload Confirm Modal -->
+      <div v-if="showConfirmModal" class="modal-overlay" style="z-index: 2500; display: flex; align-items: center; justify-content: center; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(4px);">
+        <div class="modal-dialog" style="max-width: 450px; width: 90%; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); overflow: hidden; display: flex; flex-direction: column;">
+          <header class="modal-header" style="padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+              <span>🔔 上传成功与推理确认</span>
+            </h3>
+            <button type="button" class="modal-close-btn" @click="cancelInference" style="background: none; border: none; font-size: 20px; color: var(--muted); cursor: pointer;">&times;</button>
+          </header>
+          <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="font-size: 13px; color: var(--text); line-height: 1.6;">
+              本地媒体文件已成功上传至开发板！
+              <div style="background: var(--soft); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); font-family: monospace; font-size: 12px; word-break: break-all; margin-top: 8px;">
+                {{ uploadedFilePath }}
+              </div>
+            </div>
+            <div style="font-size: 13px; color: var(--text); font-weight: 600; margin-top: 8px;">
+              是否立即对该文件运行板端 YOLO 推理与云端多模态分析？
+            </div>
+          </div>
+          <footer class="modal-footer" style="padding: 12px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px;">
+            <button type="button" @click="cancelInference" style="padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); font-weight: 600; font-size: 12px; cursor: pointer;">
+              暂不执行
+            </button>
+            <button type="button" @click="confirmInference" style="padding: 8px 20px; border-radius: 6px; border: none; background: var(--accent); color: white; font-weight: 700; font-size: 12px; cursor: pointer;">
+              立即推理
+            </button>
+          </footer>
+        </div>
+      </div>
+      
+      <!-- Zoom Lightbox -->
+      <div v-if="isZoomed" class="zoom-lightbox" @click="isZoomed = false" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.95); display: flex; align-items: center; justify-content: center; z-index: 3000; cursor: zoom-out;">
+        <img :src="zoomedImageUrl" style="max-width: 95vw; max-height: 95vh; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+        <button style="position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.25); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.2s;">&times;</button>
       </div>
     </section>
   `

@@ -240,16 +240,36 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
             "media_type": "video", "frame_count": 0,
         }
 
-    # 从 DB 取出所有 task
+    # 从 DB 取出 task 并在有 frames 字段时提取为模拟 task 列表
     tasks: list[dict[str, Any]] = []
-    for tid in task_ids:
-        task = get_edge_task(str(tid))
-        if task:
-            tasks.append(task)
+    first_task = get_edge_task(str(task_ids[0]))
+    if first_task:
+        event = first_task.get("event") or {}
+        frames = event.get("frames")
+        if frames:
+            for frame in frames:
+                url = frame.get("annotated_image_url") or ""
+                filename = url.split("/")[-1] if "/" in url else ""
+                sim_task = {
+                    "id": first_task.get("id"),
+                    "event": {
+                        "annotated_image_filename": filename,
+                        "annotated_image_url": url,
+                        "summary": frame.get("summary", {}),
+                        "inference": frame.get("inference", {}),
+                    }
+                }
+                tasks.append(sim_task)
+        else:
+            # 兼容旧的多 task 帧路径
+            for tid in task_ids:
+                task = get_edge_task(str(tid))
+                if task:
+                    tasks.append(task)
     if not tasks:
         return {
             "answer": "", "model": "",
-            "error": "所有 task_id 均无效，无法加载标注图",
+            "error": "无法加载任何视频帧标注图",
             "media_type": "video", "frame_count": 0,
         }
 

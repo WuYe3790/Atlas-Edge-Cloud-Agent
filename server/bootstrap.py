@@ -10,6 +10,10 @@ CACHE_DIR = PROJECT_ROOT / ".cache"
 
 
 def configure_runtime() -> None:
+    import mimetypes
+    mimetypes.init()
+    mimetypes.add_type('application/javascript', '.js')
+    mimetypes.add_type('text/css', '.css')
     os.environ.setdefault("HF_HOME", str(CACHE_DIR / "huggingface"))
     os.environ.setdefault("TRANSFORMERS_CACHE", str(CACHE_DIR / "transformers"))
     os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
@@ -17,4 +21,5 @@ def configure_runtime() -> None:
     src_path = str(PROJECT_ROOT / "src")
     if src_path not in sys.path:
         sys.path.insert(0, src_path)
+
 

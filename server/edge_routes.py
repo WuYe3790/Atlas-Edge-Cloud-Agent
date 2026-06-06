@@ -28,6 +28,7 @@ from travel_agent.storage import (
     update_edge_task_analysis,
     update_edge_task_event,
     upsert_edge_device,
+    complete_edge_task_only,
 )
 
 
@@ -70,14 +71,65 @@ def receive_edge_event():
         return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
 
     event = _normalize_edge_event(event)
+    
+    device_id_raw = str(event.get("device_id") or "unknown-device")
+    parent_task_id = None
+    if "|" in device_id_raw:
+        device_id, parent_task_id = device_id_raw.split("|", 1)
+        event["device_id"] = device_id
+    else:
+        device_id = device_id_raw
+
     upsert_edge_device(
-        str(event.get("device_id") or "unknown-device"),
+        device_id,
         str(event.get("hostname") or ""),
         {
             "source": "edge_event",
             "system_metrics": event.get("system_metrics") if isinstance(event.get("system_metrics"), dict) else {},
         },
     )
+    
+    if parent_task_id:
+        parent_task = get_edge_task(parent_task_id)
+        if parent_task:
+            parent_event = parent_task.get("event") or {}
+            parent_event["source_type"] = "video"
+            if "frames" not in parent_event:
+                parent_event["frames"] = []
+            
+            event = _save_embedded_artifacts(parent_task_id, event)
+            
+            frame_idx = len(parent_event["frames"])
+            frame_item = {
+                "frame_index": frame_idx,
+                "image_id": event.get("image_id"),
+                "annotated_image_url": event.get("annotated_image_url"),
+                "detections": event.get("detections", []),
+                "summary": event.get("summary", {}),
+                "inference": event.get("inference", {}),
+                "edge_decision": event.get("edge_decision", {}),
+                "timestamp": event.get("timestamp") or datetime.now().isoformat(),
+            }
+            parent_event["frames"].append(frame_item)
+            
+            # Update parent metadata to reflect the latest frame
+            parent_event["image_id"] = event.get("image_id")
+            parent_event["annotated_image_url"] = event.get("annotated_image_url")
+            parent_event["detections"] = event.get("detections", [])
+            parent_event["summary"] = event.get("summary", {})
+            parent_event["inference"] = event.get("inference", {})
+            
+            task = update_edge_task_event(parent_task_id, parent_event) or parent_task
+            need_cloud_analysis = bool(event.get("edge_decision", {}).get("need_cloud_analysis", True))
+            return jsonify(
+                {
+                    "ok": True,
+                    "task_id": parent_task_id,
+                    "cloud_analysis_required": need_cloud_analysis,
+                    "message": f"Frame aggregated into video task {parent_task_id}.",
+                }
+            )
+
     task = create_edge_task(event, status="received")
     event = _save_embedded_artifacts(task["id"], event)
     task = update_edge_task_event(task["id"], event) or task
@@ -657,10 +709,10 @@ def analyze_video_task():
         return jsonify({"ok": False, "error": "JSON body must be an object"}), 400
 
     task_ids = payload.get("task_ids")
-    if not isinstance(task_ids, list) or len(task_ids) < 2:
+    if not isinstance(task_ids, list) or len(task_ids) < 1:
         return jsonify({
             "ok": False,
-            "error": "task_ids 必须是一个包含至少 2 个 task ID 的数组"
+            "error": "task_ids 必须是一个包含至少 1 个 task ID 的数组"
         }), 400
 
     mode = str(payload.get("mode") or "both").strip()
@@ -1214,13 +1266,14 @@ def edge_control():
 
         elif action == "run_yolo":
             file_path = payload.get("file_path")
+            force_cloud = bool(payload.get("force_cloud", False))
             if not file_path:
                 file_path = "world_cup.jpg"
                 
             ext = Path(file_path).suffix.lower()
             is_video = ext in {".mp4", ".avi", ".mkv", ".mov"}
             
-            task_result, task_ids, err = _process_media_inference(ssh, file_path, server_url, is_video)
+            task_result, task_ids, err = _process_media_inference(ssh, file_path, server_url, is_video, force_cloud)
             if err:
                 return jsonify({"ok": False, "error": err}), 500
                 
@@ -1485,9 +1538,24 @@ def _trigger_image_analysis(task_id: str, mode: str = "both", thinking_mode: boo
         
     combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
     
+    combined_trace = []
+    if vision_result and not vision_result.get("error"):
+        vision_model = vision_result.get("model") or "sensenova-6.7-flash-lite"
+        combined_trace.append({
+            "type": "llm_response",
+            "model": f"{vision_model} (商汤大模型)",
+            "usage": {"total_tokens": "N/A"},
+            "status": "success",
+            "started_ms": None,
+            "ended_ms": None,
+            "duration_ms": None
+        })
+    if text_result and text_result.get("trace"):
+        combined_trace.extend(text_result["trace"])
+
     analysis = {
         "answer": combined_answer,
-        "trace": (text_result or {}).get("trace", []),
+        "trace": combined_trace,
         "structured_data": (text_result or {}).get("structured_data"),
         "mode": mode,
         "media_type": "image",
@@ -1541,9 +1609,24 @@ def _trigger_video_analysis(task_ids: list[str], mode: str = "both", thinking_mo
         
     combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
     
+    combined_trace = []
+    if vision_result and not vision_result.get("error"):
+        vision_model = vision_result.get("model") or "sensenova-6.7-flash-lite"
+        combined_trace.append({
+            "type": "llm_response",
+            "model": f"{vision_model} (商汤大模型)",
+            "usage": {"total_tokens": "N/A"},
+            "status": "success",
+            "started_ms": None,
+            "ended_ms": None,
+            "duration_ms": None
+        })
+    if text_result and text_result.get("trace"):
+        combined_trace.extend(text_result["trace"])
+
     analysis = {
         "answer": combined_answer,
-        "trace": (text_result or {}).get("trace", []),
+        "trace": combined_trace,
         "structured_data": (text_result or {}).get("structured_data"),
         "mode": mode,
         "media_type": "video",
@@ -1557,7 +1640,7 @@ def _trigger_video_analysis(task_ids: list[str], mode: str = "both", thinking_mo
     return updated, analysis
 
 
-def _process_media_inference(ssh, file_path_on_board, server_url, is_video):
+def _process_media_inference(ssh, file_path_on_board, server_url, is_video, force_cloud=False):
     set_yolo_status("running_board", file_path_on_board)
     try:
         board_user = os.getenv("ATLAS_BOARD_USER", "root").strip()
@@ -1597,11 +1680,44 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video):
             if not frame_paths:
                 return None, [], "视频未抽取出任何有效帧"
                 
+            # Create a single parent video task
+            initial_event = {
+                "device_id": board_user,
+                "hostname": "atlas-board",
+                "timestamp": datetime.now().isoformat(),
+                "image_id": Path(file_path_on_board).name,
+                "image_path": file_path_on_board,
+                "source_type": "video",
+                "inference": {
+                    "model": "yolo.om",
+                    "latency_ms": 0,
+                    "fps": 0,
+                    "conf_thres": 0.4,
+                    "iou_thres": 0.5,
+                },
+                "detections": [],
+                "summary": {
+                    "total_count": 0,
+                    "person_count": 0,
+                    "vehicle_count": 0,
+                    "class_counts": {}
+                },
+                "system_metrics": {},
+                "edge_decision": {
+                    "handled_locally": False,
+                    "need_cloud_analysis": True,
+                    "reason": "视频推理分析任务。"
+                }
+            }
+            parent_task = create_edge_task(initial_event, status="received")
+            parent_task_id = parent_task["id"]
+            
             task_ids = []
+            force_cloud_arg = " --force-cloud" if force_cloud else ""
             for idx, frame_path in enumerate(frame_paths):
                 with yolo_status_lock:
                     if YOLO_STATUS["state"] == "idle":
-                        return None, task_ids, "YOLO 推理已终止。"
+                        return None, [parent_task_id], "YOLO 推理已终止。"
                         
                 run_cmd = (
                     f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
@@ -1609,7 +1725,8 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video):
                     f"rm -f detections.json summary.json annotated.jpg && "
                     f"{python_bin} -u atlas_yolo_detect_and_upload.py"
                     f" --image '{frame_path}' --model yolo.om --labels coco_names.txt"
-                    f" --server {server_url} --upload --no-analyze --force-cloud"
+                    f" --server {server_url} --upload --no-analyze{force_cloud_arg}"
+                    f" --device-id '{board_user}|{parent_task_id}'"
                 )
                 stdin, stdout, stderr = ssh.exec_command(run_cmd)
                 out_run = stdout.read().decode('utf-8', errors='ignore')
@@ -1617,29 +1734,43 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video):
                 
                 tid = _extract_task_id(out_run)
                 if not tid:
-                    return None, task_ids, f"运行第 {idx+1} 帧 YOLO 推理失败，未获取到 task_id。输出:\n{out_run}\n错误:\n{err_run}"
+                    return None, [parent_task_id], f"运行第 {idx+1} 帧 YOLO 推理失败，未获取到 task_id。输出:\n{out_run}\n错误:\n{err_run}"
                 task_ids.append(tid)
                 
             set_yolo_status("running_cloud")
             
             with yolo_status_lock:
                 if YOLO_STATUS["state"] == "idle":
-                    return None, task_ids, "YOLO 推理已终止。"
-                    
-            updated_task, _ = _trigger_video_analysis(task_ids)
-            return updated_task, task_ids, None
+                    return None, [parent_task_id], "YOLO 推理已终止。"
+            
+            # Determine if cloud analysis is required
+            parent_task = get_edge_task(parent_task_id)
+            any_cloud_required = force_cloud
+            if not any_cloud_required and parent_task:
+                frames = parent_task.get("event", {}).get("frames", [])
+                for f in frames:
+                    if f.get("edge_decision", {}).get("need_cloud_analysis", True):
+                        any_cloud_required = True
+                        break
+                        
+            if any_cloud_required:
+                updated_task, _ = _trigger_video_analysis([parent_task_id])
+            else:
+                updated_task = complete_edge_task_only(parent_task_id)
+            return updated_task, [parent_task_id], None
         else:
             with yolo_status_lock:
                 if YOLO_STATUS["state"] == "idle":
                     return None, [], "YOLO 推理已终止。"
                     
+            force_cloud_arg = " --force-cloud" if force_cloud else ""
             run_cmd = (
                 f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
                 f"cd {yolo_dir} && "
                 f"rm -f detections.json summary.json annotated.jpg && "
                 f"{python_bin} -u atlas_yolo_detect_and_upload.py"
                 f" --image '{file_path_on_board}' --model yolo.om --labels coco_names.txt"
-                f" --server {server_url} --upload --no-analyze --force-cloud"
+                f" --server {server_url} --upload --no-analyze{force_cloud_arg}"
             )
             stdin, stdout, stderr = ssh.exec_command(run_cmd)
             out_run = stdout.read().decode('utf-8', errors='ignore')
@@ -1654,8 +1785,13 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video):
             with yolo_status_lock:
                 if YOLO_STATUS["state"] == "idle":
                     return None, [tid], "YOLO 推理已终止。"
-                    
-            updated_task, _ = _trigger_image_analysis(tid)
+            
+            task = get_edge_task(tid)
+            is_cloud_required = force_cloud or (task and task.get("event", {}).get("edge_decision", {}).get("need_cloud_analysis", True))
+            if is_cloud_required:
+                updated_task, _ = _trigger_image_analysis(tid)
+            else:
+                updated_task = complete_edge_task_only(tid)
             return updated_task, [tid], None
     finally:
         set_yolo_status("idle")

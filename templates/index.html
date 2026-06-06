@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;700;900&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260605-upload-support">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260606-layout-fixed">
   <style>
     @keyframes spin {
       to { transform: rotate(360deg); }
@@ -48,6 +48,7 @@
       :system-status="systemStatus"
       :location-status-text="locationStatusText"
       :yolo-inference-status="yoloInferenceStatus"
+      v-model:force-cloud="forceCloud"
       @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
       @new-chat="newChat"
       @select-conversation="selectConversation"
@@ -131,20 +132,44 @@
 
     <!-- Run YOLO Board File Selection Modal -->
     <div class="modal-overlay" v-if="isRunYoloModalOpen" style="z-index: 2000; display: flex; align-items: center; justify-content: center; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(4px);">
-      <div class="modal-dialog" style="max-width: 550px; width: 90%; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); overflow: hidden;">
-        <header class="modal-header" style="padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;">
+      <div class="modal-dialog" style="max-width: 550px; width: 90%; background: var(--panel-solid); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); overflow: hidden; display: flex; flex-direction: column; max-height: 90vh;">
+        <header class="modal-header" style="padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
           <h3 style="margin: 0; font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
             <span>🔍 选择板端文件运行 YOLO 推理</span>
           </h3>
           <button type="button" class="modal-close-btn" @click="isRunYoloModalOpen = false" style="background: none; border: none; font-size: 20px; color: var(--muted); cursor: pointer;">&times;</button>
         </header>
-        <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 16px;">
+        <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; max-height: 60vh;">
           <div style="display: flex; flex-direction: column; gap: 6px;">
             <label style="font-size: 12px; font-weight: 600; color: var(--muted);">从已扫描板端文件列表中选择：</label>
-            <select v-model="selectedBoardFile" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-solid); color: var(--text); font-size: 13px; outline: none; cursor: pointer;">
-              <option value="">-- 请选择文件 --</option>
-              <option v-for="file in boardFiles" :key="file" :value="file">{{ file }}</option>
-            </select>
+            <div class="custom-file-list" style="max-height: 180px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,0.02); padding: 6px; display: flex; flex-direction: column; gap: 4px;">
+              <div v-if="!boardFiles || !boardFiles.length" style="padding: 12px; text-align: center; color: var(--muted); font-size: 13px;">
+                暂无扫描到的多媒体文件
+              </div>
+              <div v-else 
+                   v-for="file in boardFiles" 
+                   :key="file" 
+                   @click="selectedBoardFile = (selectedBoardFile === file ? '' : file)"
+                   :style="{
+                     padding: '8px 12px',
+                     borderRadius: '6px',
+                     fontSize: '13px',
+                     cursor: 'pointer',
+                     whiteSpace: 'nowrap',
+                     overflow: 'hidden',
+                     textOverflow: 'ellipsis',
+                     flexShrink: 0,
+                     background: selectedBoardFile === file ? 'var(--accent)' : 'transparent',
+                     color: selectedBoardFile === file ? '#ffffff' : 'var(--text)',
+                     border: selectedBoardFile === file ? '1px solid var(--accent)' : '1px solid transparent',
+                     transition: 'all 0.15s ease'
+                   }"
+                   class="board-file-item"
+                   :title="file">
+                {% raw %}📁 {{ file.split('/').pop() }}
+                <span style="font-size: 11px; opacity: 0.6; margin-left: 8px;">({{ file }})</span>{% endraw %}
+              </div>
+            </div>
           </div>
           
           <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -178,7 +203,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="{{ url_for('static', filename='travel_helpers.js') }}?v=20260605-upload-support-v2"></script>
-  <script type="module" src="{{ url_for('static', filename='app.js') }}?v=20260605-upload-support-v2"></script>
+  <script src="{{ url_for('static', filename='travel_helpers.js') }}?v=20260606-layout-fixed"></script>
+  <script type="module" src="{{ url_for('static', filename='app.js') }}?v=20260606-layout-fixed"></script>
 </body>
 </html>

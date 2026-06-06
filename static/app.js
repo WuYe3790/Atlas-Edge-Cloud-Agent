@@ -1,8 +1,8 @@
 import { createApp, ref, reactive, onMounted, watch, nextTick } from 'vue';
-import SidebarComponent from './components/SidebarComponent.js?v=20260605-upload-support-v2';
-import TravelAssistant from './components/TravelAssistant.js?v=20260605-upload-support-v2';
-import EdgeMonitor from './components/EdgeMonitor.js?v=20260605-upload-support-v2';
-import TaskModal from './components/TaskModal.js?v=20260605-upload-support-v2';
+import SidebarComponent from './components/SidebarComponent.js?v=20260606-layout-fixed';
+import TravelAssistant from './components/TravelAssistant.js?v=20260606-layout-fixed';
+import EdgeMonitor from './components/EdgeMonitor.js?v=20260606-layout-fixed';
+import TaskModal from './components/TaskModal.js?v=20260606-layout-fixed';
 
 createApp({
   components: {
@@ -87,6 +87,7 @@ createApp({
     const customBoardFile = ref('');
     const runYoloLoading = ref(false);
     const yoloInferenceStatus = ref('idle');
+    const forceCloud = ref(false);
 
 
     // Slide-out terminal drawer specific state
@@ -613,7 +614,7 @@ createApp({
         const response = await fetch("/api/edge/control", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "run_yolo", file_path: "world_cup.jpg" })
+          body: JSON.stringify({ action: "run_yolo", file_path: "world_cup.jpg", force_cloud: forceCloud.value })
         });
         const data = await response.json();
         terminalLoading.value = false;
@@ -650,7 +651,7 @@ createApp({
         const response = await fetch("/api/edge/control", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "run_yolo", file_path: filePath })
+          body: JSON.stringify({ action: "run_yolo", file_path: filePath, force_cloud: forceCloud.value })
         });
         const data = await response.json();
         terminalLoading.value = false;
@@ -690,7 +691,7 @@ createApp({
         const response = await fetch("/api/edge/control", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "run_yolo", file_path: filePath })
+          body: JSON.stringify({ action: "run_yolo", file_path: filePath, force_cloud: forceCloud.value })
         });
         const data = await response.json();
         terminalLoading.value = false;
@@ -897,6 +898,7 @@ createApp({
       customBoardFile,
       runYoloLoading,
       yoloInferenceStatus,
+      forceCloud,
       
       selectConversation,
       deleteConversation,

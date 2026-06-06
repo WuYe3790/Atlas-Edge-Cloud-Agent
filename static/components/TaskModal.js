@@ -10,6 +10,18 @@ export default {
     error: { type: String, default: '' }
   },
   emits: ['close', 'run-analysis'],
+  data() {
+    return {
+      isZoomed: false,
+      activeFrameIdx: 0
+    };
+  },
+  watch: {
+    taskId() {
+      this.activeFrameIdx = 0;
+      this.isZoomed = false;
+    }
+  },
   methods: {
     escapeHtml(text) {
       const div = document.createElement("div");
@@ -35,7 +47,12 @@ export default {
     <div class="modal-overlay" :hidden="!isOpen" @click="$emit('close')" style="z-index: 1000;">
       <div class="modal-dialog" @click.stop="" style="max-height: 90vh; overflow-y: auto;">
         <header class="modal-header">
-          <h3 id="modalTaskTitle">任务详情: {{ taskDetail ? (taskDetail.image_id || taskDetail.event?.image_id || '未命名') : '' }}</h3>
+          <h3 id="modalTaskTitle" style="display: flex; align-items: center; gap: 8px;">
+            <span :style="taskDetail && taskDetail.media_type === 'video' ? 'background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;' : 'background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0;'" style="font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: sans-serif;">
+              {{ taskDetail && taskDetail.media_type === 'video' ? '🎥 视频' : '🖼️ 图片' }}
+            </span>
+            <span>任务详情: {{ taskDetail ? (taskDetail.image_id || taskDetail.event?.image_id || '未命名') : '' }}</span>
+          </h3>
           <button id="modalCloseBtn" type="button" class="modal-close-btn" @click="$emit('close')">&times;</button>
         </header>
         
@@ -52,6 +69,7 @@ export default {
                 <div><span>设备 ID</span>{{ taskDetail.device_id || taskDetail.event?.device_id || 'unknown' }}</div>
                 <div><span>主机名</span>{{ taskDetail.event?.hostname || 'unknown' }}</div>
                 <div><span>图片 ID</span>{{ taskDetail.image_id || taskDetail.event?.image_id || '' }}</div>
+                <div><span>媒体类型</span><strong>{{ taskDetail.media_type === 'video' ? '🎥 视频 (Video)' : '🖼️ 图片 (Image)' }}</strong></div>
                 <div><span>来源</span>{{ taskDetail.source_type || taskDetail.event?.source_type || 'edge' }}</div>
                 <div><span>状态</span><strong>{{ taskDetail.status === 'completed' ? '已分析' : (taskDetail.status || '已接收') }}</strong></div>
                 <div><span>创建时间</span>{{ taskDetail.created_at }}</div>
@@ -71,10 +89,50 @@ export default {
               </div>
             </section>
             
-            <!-- 3. Annotated Image -->
-            <section v-if="taskDetail.event?.annotated_image_url" class="modal-section">
-              <h4 class="modal-section-title">标注图像</h4>
-              <img class="modal-annotated-image" :src="taskDetail.event.annotated_image_url" alt="YOLO Annotated Result" style="max-width:100%; border-radius:8px;">
+            <!-- 3. Annotated Image / Video Frames -->
+            <section v-if="taskDetail.event?.annotated_image_url || (taskDetail.event?.frames && taskDetail.event.frames.length)" class="modal-section">
+              <h4 class="modal-section-title">
+                {{ taskDetail.media_type === 'video' ? '🎥 视频帧序列标注图像 (点击可放大)' : '🖼️ 标注图像 (点击可放大)' }}
+              </h4>
+              
+              <!-- Video Mode Frames Slider -->
+              <div v-if="taskDetail.media_type === 'video' && taskDetail.event?.frames && taskDetail.event.frames.length" style="display:flex; flex-direction:column; gap:8px;">
+                <div class="modal-image-container" style="position: relative; cursor: zoom-in;" @click="isZoomed = true">
+                  <img class="modal-annotated-image" 
+                       :src="taskDetail.event.frames[activeFrameIdx || 0].annotated_image_url" 
+                       alt="YOLO Annotated Result" 
+                       style="max-width:100%; border-radius:8px; display:block; margin:0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                  <div class="image-zoom-hint" style="position: absolute; right: 10px; bottom: 10px; background: rgba(0,0,0,0.65); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none;">
+                    🔍 点击放大帧 {{ (activeFrameIdx || 0) + 1 }}
+                  </div>
+                </div>
+                <!-- Thumbnails Slider -->
+                <div style="display:flex; gap:8px; overflow-x:auto; padding:4px 0;">
+                  <div v-for="(frame, fIdx) in taskDetail.event.frames" 
+                       :key="fIdx" 
+                       @click="activeFrameIdx = fIdx"
+                       :style="{
+                         flex: '0 0 70px',
+                         height: '50px',
+                         borderRadius: '6px',
+                         overflow: 'hidden',
+                         cursor: 'pointer',
+                         border: (activeFrameIdx || 0) === fIdx ? '2px solid var(--accent)' : '1px solid var(--line)',
+                         opacity: (activeFrameIdx || 0) === fIdx ? '1' : '0.7',
+                         transition: 'all 0.15s ease'
+                       }">
+                    <img :src="frame.annotated_image_url" style="width:100%; height:100%; object-fit:cover;">
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Image Mode -->
+              <div v-else class="modal-image-container" style="position: relative; cursor: zoom-in;" @click="isZoomed = true">
+                <img class="modal-annotated-image" :src="taskDetail.event.annotated_image_url" alt="YOLO Annotated Result" style="max-width:100%; border-radius:8px; display:block; margin:0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                <div class="image-zoom-hint" style="position: absolute; right: 10px; bottom: 10px; background: rgba(0,0,0,0.65); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none;">
+                  🔍 点击放大
+                </div>
+              </div>
             </section>
             
             <!-- 4. Detections -->
@@ -217,6 +275,12 @@ export default {
           <a class="modal-report-link html-report" :href="'/api/edge/tasks/' + encodeURIComponent(taskDetail.id) + '/report/html'" target="_blank" rel="noreferrer">导出 HTML 报告</a>
           <button v-if="!taskDetail.analysis?.answer" id="modalAnalyzeBtn" type="button" class="modal-analyze-btn" @click="$emit('run-analysis', taskDetail.id)">触发云端分析</button>
         </footer>
+      </div>
+      
+      <!-- Zoom Lightbox -->
+      <div v-if="isZoomed" class="zoom-lightbox" @click="isZoomed = false" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.95); display: flex; align-items: center; justify-content: center; z-index: 3000; cursor: zoom-out;">
+        <img :src="taskDetail.media_type === 'video' && taskDetail.event?.frames && taskDetail.event.frames.length ? taskDetail.event.frames[activeFrameIdx || 0].annotated_image_url : taskDetail.event.annotated_image_url" style="max-width: 95vw; max-height: 95vh; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+        <button style="position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.25); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.2s;">&times;</button>
       </div>
     </div>
   `

@@ -12,11 +12,13 @@ export default {
     devices: { type: Array, default: () => [] },
     systemStatus: { type: Object, default: () => ({}) },
     locationStatusText: { type: String, default: '未定位' },
-    yoloInferenceStatus: { type: String, default: 'idle' }
+    yoloInferenceStatus: { type: String, default: 'idle' },
+    forceCloud: { type: Boolean, default: false }
   },
   emits: [
     'update:activeMode',
     'update:activeTab',
+    'update:forceCloud',
     'toggle-sidebar',
     'new-chat',
     'select-conversation',
@@ -321,6 +323,17 @@ export default {
             <h5 style="margin:0 0 10px 0; font-size:12px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:6px;">
               <span>🔌 板端 SSH 物理控制</span>
             </h5>
+            <!-- Force Cloud Multimodal Analysis Toggle (Vercel Switch style) -->
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding:8px; background:rgba(59,130,246,0.05); border:1px solid rgba(59,130,246,0.1); border-radius:8px;">
+              <div style="display:flex; flex-direction:column; gap:2px;">
+                <span style="font-size:11.5px; font-weight:700; color:var(--text)">强制云端大模型推理</span>
+                <span style="font-size:9.5px; color:var(--muted)">开启后跳过边端决策评估</span>
+              </div>
+              <label class="switch-toggle" style="position: relative; display: inline-block; width: 34px; height: 20px;">
+                <input type="checkbox" :checked="forceCloud" @change="$emit('update:forceCloud', $event.target.checked)" style="opacity: 0; width: 0; height: 0;">
+                <span class="switch-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #cbd5e1; transition: .3s; border-radius: 20px;"></span>
+              </label>
+            </div>
             <div class="board-control-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
               <button class="control-btn" type="button" @click="$emit('control-device', 'start_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(59,130,246,0.3); border-radius:6px; background:rgba(59,130,246,0.05); color:var(--accent); cursor:pointer; transition:all 0.2s;">启动后台心跳</button>
               <button class="control-btn" type="button" @click="$emit('control-device', 'stop_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(239,68,68,0.3); border-radius:6px; background:rgba(239,68,68,0.05); color:#ef4444; cursor:pointer; transition:all 0.2s;">停止后台心跳</button>

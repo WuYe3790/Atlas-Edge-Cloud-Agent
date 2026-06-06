@@ -255,6 +255,22 @@ def update_edge_task_analysis(task_id: str, analysis: dict[str, Any], status: st
     return get_edge_task(task_id)
 
 
+def complete_edge_task_only(task_id: str) -> dict[str, Any] | None:
+    now = utc_now()
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE edge_tasks
+            SET status = 'completed', updated_at = ?
+            WHERE id = ?
+            """,
+            (now, task_id),
+        )
+    if cursor.rowcount == 0:
+        return None
+    return get_edge_task(task_id)
+
+
 def update_edge_task_event(task_id: str, event: dict[str, Any], status: str | None = None) -> dict[str, Any] | None:
     now = utc_now()
     event_json = json.dumps(event, ensure_ascii=False)
@@ -287,6 +303,14 @@ def _edge_task_from_row(row: sqlite3.Row) -> dict[str, Any]:
     item["event"] = json.loads(item.pop("event_json") or "{}")
     analysis_json = item.pop("analysis_json")
     item["analysis"] = json.loads(analysis_json) if analysis_json else None
+    
+    # Differentiate media_type ("video" vs "image") based on source_type or event's source_type
+    source_type = item.get("source_type") or item.get("event", {}).get("source_type") or ""
+    if source_type in ("video", "video_stream", "uploaded_video"):
+        item["media_type"] = "video"
+    else:
+        item["media_type"] = "image"
+        
     return item
 
 
