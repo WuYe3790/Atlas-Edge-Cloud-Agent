@@ -304,12 +304,24 @@ def _edge_task_from_row(row: sqlite3.Row) -> dict[str, Any]:
     analysis_json = item.pop("analysis_json")
     item["analysis"] = json.loads(analysis_json) if analysis_json else None
     
-    # Differentiate media_type ("video" vs "image") based on source_type or event's source_type
-    source_type = item.get("source_type") or item.get("event", {}).get("source_type") or ""
-    if source_type in ("video", "video_stream", "uploaded_video"):
+    # Differentiate media_type ("video" vs "image")
+    # 优先从 event 中显式声明的 media_type 读取（由 _process_media_inference 设置）
+    # 其次从 analysis 中读取（分析结果可能也标记了 media_type）
+    # 最后根据 source_type 推断
+    event = item.get("event") or {}
+    analysis = item.get("analysis") or {}
+    if isinstance(event, dict) and event.get("media_type") == "video":
         item["media_type"] = "video"
-    else:
+    elif isinstance(analysis, dict) and analysis.get("media_type") == "video":
+        item["media_type"] = "video"
+    elif isinstance(event, dict) and event.get("media_type") == "image":
         item["media_type"] = "image"
+    else:
+        source_type = item.get("source_type") or event.get("source_type") or ""
+        if source_type in ("video", "video_stream", "uploaded_video", "camera_stream"):
+            item["media_type"] = "video"
+        else:
+            item["media_type"] = "image"
         
     return item
 

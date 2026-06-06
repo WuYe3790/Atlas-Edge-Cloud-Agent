@@ -1445,46 +1445,48 @@ def upload_media_file():
 # ============================================================
 
 EXTRACTOR_SCRIPT_CONTENT = """# -*- coding: utf-8 -*-
-import cv2
-import os
-import sys
+import cv2, os, sys
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: extract_frames.py <video_path> <out_dir>", file=sys.stderr)
+        print("Usage: extract_frames.py <video_path> <out_dir> <target_count>", file=sys.stderr)
         sys.exit(1)
     video_path = sys.argv[1]
     out_dir = sys.argv[2]
+    target = int(sys.argv[3]) if len(sys.argv) > 3 else 12
     os.makedirs(out_dir, exist_ok=True)
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print("Error: Could not open video " + video_path, file=sys.stderr)
         sys.exit(2)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if total_frames <= 0:
-        print("Error: Video has 0 frames or invalid frame count", file=sys.stderr)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    duration = total / max(fps, 1.0)
+    if total <= 0:
+        print("Error: Video has 0 frames", file=sys.stderr)
         sys.exit(3)
-    
-    if total_frames >= 6:
-        indices = [int(i * (total_frames - 1) / 5) for i in range(6)]
-    else:
-        indices = list(range(total_frames))
-    
-    indices = sorted(list(set(indices)))
-    
-    frame_idx = 0
-    saved_paths = []
-    while cap.isOpened():
+
+    # 动态抽帧：基于视频时长
+    if duration < 10:     target = min(total, 8)
+    elif duration < 60:   target = min(total, 12)
+    else:                 target = min(total, 16)
+
+    n = target
+    step = total / n
+    pick = sorted(set(int(i * step) for i in range(n)))
+    saved = []
+    idx = 0
+    while True:
         ret, frame = cap.read()
         if not ret:
             break
-        if frame_idx in indices:
-            out_path = os.path.join(out_dir, "frame_{:06d}.jpg".format(frame_idx))
-            cv2.imwrite(out_path, frame)
-            saved_paths.append(out_path)
-        frame_idx += 1
+        if idx in pick:
+            path = os.path.join(out_dir, "frame_{:06d}.jpg".format(idx))
+            cv2.imwrite(path, frame)
+            saved.append(path)
+        idx += 1
     cap.release()
-    print("SUCCESS:" + ",".join(saved_paths))
+    print("SUCCESS:{}:{}:{}".format(int(fps), int(duration), ",".join(saved)))
 
 if __name__ == '__main__':
     main()
@@ -1539,17 +1541,9 @@ def _trigger_image_analysis(task_id: str, mode: str = "both", thinking_mode: boo
     combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
     
     combined_trace = []
-    if vision_result and not vision_result.get("error"):
-        vision_model = vision_result.get("model") or "sensenova-6.7-flash-lite"
-        combined_trace.append({
-            "type": "llm_response",
-            "model": f"{vision_model} (商汤大模型)",
-            "usage": {"total_tokens": "N/A"},
-            "status": "success",
-            "started_ms": None,
-            "ended_ms": None,
-            "duration_ms": None
-        })
+    # 优先使用 vision_result 自带的真实 trace（含 token 用量等）
+    if vision_result and vision_result.get("trace"):
+        combined_trace.extend(vision_result["trace"])
     if text_result and text_result.get("trace"):
         combined_trace.extend(text_result["trace"])
 
@@ -1610,17 +1604,9 @@ def _trigger_video_analysis(task_ids: list[str], mode: str = "both", thinking_mo
     combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
     
     combined_trace = []
-    if vision_result and not vision_result.get("error"):
-        vision_model = vision_result.get("model") or "sensenova-6.7-flash-lite"
-        combined_trace.append({
-            "type": "llm_response",
-            "model": f"{vision_model} (商汤大模型)",
-            "usage": {"total_tokens": "N/A"},
-            "status": "success",
-            "started_ms": None,
-            "ended_ms": None,
-            "duration_ms": None
-        })
+    # 优先使用 vision_result 自带的真实 trace（含 token 用量等）
+    if vision_result and vision_result.get("trace"):
+        combined_trace.extend(vision_result["trace"])
     if text_result and text_result.get("trace"):
         combined_trace.extend(text_result["trace"])
 
@@ -1667,31 +1653,46 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video, forc
                 if YOLO_STATUS["state"] == "idle":
                     return None, [], "YOLO 推理已终止。"
                     
-            cmd = f"{python_bin} {board_home}/uploads/extract_frames.py '{file_path_on_board}' '{frames_dir}'"
+            cmd = f"{python_bin} {board_home}/uploads/extract_frames.py '{file_path_on_board}' '{frames_dir}' 12"
             stdin, stdout, stderr = ssh.exec_command(cmd)
             out_msg = stdout.read().decode('utf-8', errors='ignore')
             err_msg = stderr.read().decode('utf-8', errors='ignore')
-            
+
             if "SUCCESS:" not in out_msg:
                 return None, [], f"板端视频抽帧失败: {err_msg or out_msg}"
-                
-            frame_paths = out_msg.strip().split("SUCCESS:")[1].split(",")
-            frame_paths = [p.strip() for p in frame_paths if p.strip()]
+
+            # SUCCESS:<fps>:<duration>:<paths>
+            success_part = out_msg.strip().split("SUCCESS:", 1)[1]
+            parts = success_part.split(":", 2)
+            video_fps = 0
+            video_duration = 0
+            if len(parts) >= 2:
+                try:
+                    video_fps = int(parts[0])
+                    video_duration = int(parts[1])
+                except ValueError:
+                    pass
+                frame_paths_str = parts[2] if len(parts) >= 3 else parts[1]
+            else:
+                frame_paths_str = parts[0]
+
+            frame_paths = [p.strip() for p in frame_paths_str.split(",") if p.strip()]
             if not frame_paths:
                 return None, [], "视频未抽取出任何有效帧"
                 
             # Create a single parent video task
             initial_event = {
-                "device_id": board_user,
+                "device_id": "atlas-200i-dk-a2-01",
                 "hostname": "atlas-board",
                 "timestamp": datetime.now().isoformat(),
                 "image_id": Path(file_path_on_board).name,
                 "image_path": file_path_on_board,
-                "source_type": "video",
+                "source_type": "camera_stream",
+                "media_type": "video",
                 "inference": {
                     "model": "yolo.om",
                     "latency_ms": 0,
-                    "fps": 0,
+                    "fps": video_fps,
                     "conf_thres": 0.4,
                     "iou_thres": 0.5,
                 },
@@ -1706,54 +1707,107 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video, forc
                 "edge_decision": {
                     "handled_locally": False,
                     "need_cloud_analysis": True,
-                    "reason": "视频推理分析任务。"
+                    "reason": f"视频推理分析（{len(frame_paths)} 帧自适应抽帧，FPS={video_fps}）。"
                 }
             }
             parent_task = create_edge_task(initial_event, status="received")
             parent_task_id = parent_task["id"]
             
-            task_ids = []
-            force_cloud_arg = " --force-cloud" if force_cloud else ""
+            all_frames_data: list[dict[str, Any]] = []
+            all_detections: list[dict[str, Any]] = []
+            total_persons = 0
+            total_vehicles = 0
+
+            # ---- 逐帧本地 YOLO（不上传，不创建独立 task）----
             for idx, frame_path in enumerate(frame_paths):
                 with yolo_status_lock:
                     if YOLO_STATUS["state"] == "idle":
                         return None, [parent_task_id], "YOLO 推理已终止。"
-                        
+
+                # 不传 --upload！纯本地推理，输出到本地 JSON/JPG
                 run_cmd = (
                     f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
                     f"cd {yolo_dir} && "
                     f"rm -f detections.json summary.json annotated.jpg && "
                     f"{python_bin} -u atlas_yolo_detect_and_upload.py"
                     f" --image '{frame_path}' --model yolo.om --labels coco_names.txt"
-                    f" --server {server_url} --upload --no-analyze{force_cloud_arg}"
-                    f" --device-id '{board_user}|{parent_task_id}'"
                 )
-                stdin, stdout, stderr = ssh.exec_command(run_cmd)
-                out_run = stdout.read().decode('utf-8', errors='ignore')
-                err_run = stderr.read().decode('utf-8', errors='ignore')
-                
-                tid = _extract_task_id(out_run)
-                if not tid:
-                    return None, [parent_task_id], f"运行第 {idx+1} 帧 YOLO 推理失败，未获取到 task_id。输出:\n{out_run}\n错误:\n{err_run}"
-                task_ids.append(tid)
-                
+                _sin, _sout, _serr = ssh.exec_command(run_cmd)
+                _sout.read()
+                _serr.read()
+
+                # 拉取标注图 base64 并保存到本地 edge_artifacts
+                _sin, img_out, _serr = ssh.exec_command(f"base64 {yolo_dir}/annotated.jpg")
+                img_b64 = img_out.read().decode('utf-8', errors='ignore').replace(chr(10), '').replace(chr(13), '').strip()
+                img_out.close()
+                annotated_url = ""
+                if img_b64:
+                    try:
+                        img_bytes = base64.b64decode(img_b64, validate=True)
+                        if img_bytes:
+                            EDGE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+                            art_name = f"video_{timestamp}_frame_{idx}.jpg"
+                            (EDGE_ARTIFACT_DIR / art_name).write_bytes(img_bytes)
+                            annotated_url = f"/api/edge/artifacts/{art_name}"
+                    except Exception:
+                        pass
+
+                # 读取检测和摘要 JSON
+                _sin, det_out, _serr = ssh.exec_command(f"cat {yolo_dir}/detections.json")
+                det_raw = det_out.read().decode('utf-8', errors='ignore')
+                _sin, sum_out, _serr = ssh.exec_command(f"cat {yolo_dir}/summary.json")
+                sum_raw = sum_out.read().decode('utf-8', errors='ignore')
+                try:
+                    det_data = json.loads(det_raw) if det_raw.strip() else []
+                except json.JSONDecodeError:
+                    det_data = []
+                try:
+                    sum_data = json.loads(sum_raw) if sum_raw.strip() else {}
+                except json.JSONDecodeError:
+                    sum_data = {}
+
+                all_frames_data.append({
+                    "frame_index": idx,
+                    "frame_path": frame_path,
+                    "image_id": Path(frame_path).name,
+                    "annotated_image_url": annotated_url,
+                    "detections": det_data,
+                    "summary": sum_data,
+                    "inference": {},
+                })
+                all_detections.extend(det_data if isinstance(det_data, list) else [])
+                total_persons += sum_data.get("person_count", 0)
+                total_vehicles += sum_data.get("vehicle_count", 0)
+
+            
+
+            # 更新父任务 event 中的 frames 和汇总 summary
+            parent_task = get_edge_task(parent_task_id)
+            if parent_task:
+                pev = dict(parent_task.get("event") or {})
+                pev["frames"] = all_frames_data
+                pev["all_detections"] = all_detections
+                pev["frame_count"] = len(all_frames_data)
+                pev["summary"] = {
+                    "total_count": len(all_detections),
+                    "person_count": total_persons,
+                    "vehicle_count": total_vehicles,
+                    "class_counts": _summarize_detections(all_detections).get("class_counts", {}),
+                    "frame_count": len(all_frames_data),
+                }
+                pev["media_type"] = "video"
+                update_edge_task_event(parent_task_id, pev)
+                parent_task = get_edge_task(parent_task_id)  # re-read updated
+
             set_yolo_status("running_cloud")
             
             with yolo_status_lock:
                 if YOLO_STATUS["state"] == "idle":
                     return None, [parent_task_id], "YOLO 推理已终止。"
             
-            # Determine if cloud analysis is required
+            # 视频任务始终触发云端分析（不受 force_cloud 开关影响）
             parent_task = get_edge_task(parent_task_id)
-            any_cloud_required = force_cloud
-            if not any_cloud_required and parent_task:
-                frames = parent_task.get("event", {}).get("frames", [])
-                for f in frames:
-                    if f.get("edge_decision", {}).get("need_cloud_analysis", True):
-                        any_cloud_required = True
-                        break
-                        
-            if any_cloud_required:
+            if parent_task:
                 updated_task, _ = _trigger_video_analysis([parent_task_id])
             else:
                 updated_task = complete_edge_task_only(parent_task_id)

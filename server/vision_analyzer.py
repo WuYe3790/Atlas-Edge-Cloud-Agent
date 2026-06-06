@@ -42,7 +42,7 @@ class VisionConfig:
         self.temperature: float = float(os.getenv("VISION_TEMPERATURE", "0.3"))
         self.timeout_image: int = int(os.getenv("VISION_TIMEOUT_IMAGE", "120"))
         self.timeout_video: int = int(os.getenv("VISION_TIMEOUT_VIDEO", "300"))
-        self.max_video_frames: int = int(os.getenv("VISION_MAX_VIDEO_FRAMES", "10"))
+        self.max_video_frames: int = int(os.getenv("VISION_MAX_VIDEO_FRAMES", "16"))
 
     @property
     def is_available(self) -> bool:
@@ -130,6 +130,8 @@ def analyze_with_vision(task: dict[str, Any]) -> dict[str, Any]:
     prompt = build_image_vision_prompt(task)
     data_url = f"data:{mime_type};base64,{image_b64}"
 
+    print(f"[vision_analyzer] IMG calling {config.model} via {config.base_url}...", flush=True)
+
     llm = ChatOpenAI(
         model=config.model,
         api_key=config.api_key,
@@ -148,13 +150,38 @@ def analyze_with_vision(task: dict[str, Any]) -> dict[str, Any]:
 
     response = llm.invoke([message])
     content: str = response.content if hasattr(response, "content") else str(response)
+    answer = content.strip() if content else ""
+
+    print(f"[vision_analyzer] IMG done: answer_len={len(answer)}", flush=True)
+    # 从 ChatOpenAI 响应中提取真实 token 用量
+    usage_meta = getattr(response, "usage_metadata", None) or {}
+    resp_meta = getattr(response, "response_metadata", {}) or {}
+    real_tokens = (
+        usage_meta.get("total_tokens")
+        or resp_meta.get("token_usage", {}).get("total_tokens")
+        or (len(answer) // 3 if answer else 0)
+    )
+    print(f"[vision_analyzer] IMG tokens={real_tokens}", flush=True)
 
     return {
-        "answer": content.strip() if content else "",
+        "answer": answer,
         "model": config.model,
         "error": None,
         "media_type": "image",
         "frame_count": 1,
+        "usage": {"total_tokens": real_tokens},
+        "trace": [
+            {
+                "type": "vision_analysis",
+                "model": config.model,
+                "media_type": "image",
+                "frame_count": 1,
+                "status": "success" if answer else "empty",
+                "duration_ms": None,
+                "usage": {"total_tokens": real_tokens},
+                "result": answer[:300] if answer else "",
+            }
+        ],
     }
 
 
@@ -168,12 +195,18 @@ def build_video_vision_prompt(
 ) -> str:
     """构造多帧视频分析提示词。
 
-    把每帧的 YOLO 摘要汇总成时序上下文，让模型理解帧间变化。
+    将每帧的 YOLO 摘要汇总成丰富的时序上下文，
+    包括帧间数量变化趋势、动态事件检测、累计统计等，
+    让模型真正理解视频的时间维度信息。
     """
     frame_infos: list[str] = []
+    timeline_rows: list[str] = []
     total_persons = 0
     total_vehicles = 0
     all_objects: set[str] = set()
+    prev_pc = None
+    prev_vc = None
+    total_per_frame: list[int] = []
 
     for i, task in enumerate(tasks):
         event = task.get("event") or {}
@@ -181,46 +214,110 @@ def build_video_vision_prompt(
         inference = event.get("inference") or {}
         pc = summary.get("person_count", 0)
         vc = summary.get("vehicle_count", 0)
+        tc = summary.get("total_count", 0)
         total_persons += pc
         total_vehicles += vc
+        total_per_frame.append(tc)
         counts = summary.get("class_counts", {})
         if isinstance(counts, dict):
             for k in counts:
-                all_objects.add(str(k))
+                if k not in ("person", "car", "bus", "truck", "motorcycle", "bicycle"):
+                    all_objects.add(str(k))
 
-        frame_infos.append(
-            f"帧 {i+1} ({task.get('id','')[:16]}...): "
-            f"总目标={summary.get('total_count',0)}, "
-            f"人={pc}, 车={vc}, "
-            f"延迟={inference.get('latency_ms','?')}ms"
+        # 构建帧描述
+        frame_desc = (
+            f"帧 {i+1}: 总目标={tc}, 人={pc}, 车={vc}"
+        )
+        # 检测帧间变化
+        changes = []
+        if prev_pc is not None:
+            pc_delta = pc - prev_pc
+            vc_delta = vc - prev_vc if prev_vc is not None else 0
+            if pc_delta > 0:
+                changes.append(f"新增 {pc_delta} 人")
+            elif pc_delta < 0:
+                changes.append(f"减少 {abs(pc_delta)} 人")
+            if vc_delta > 0:
+                changes.append(f"新增 {vc_delta} 辆车")
+            elif vc_delta < 0:
+                changes.append(f"减少 {abs(vc_delta)} 辆车")
+        prev_pc = pc
+        prev_vc = vc
+        if changes:
+            frame_desc += f" | 变化: {', '.join(changes)}"
+        frame_desc += f" | 延迟={inference.get('latency_ms','?')}ms"
+        frame_infos.append(frame_desc)
+        timeline_rows.append(
+            f"| {i+1} | {tc} | {pc} | {vc} | {', '.join(changes) if changes else '—'} |"
         )
 
     frame_summary = "\n".join(frame_infos)
+    timeline = "\n".join(timeline_rows)
 
-    return f"""你正在查看一段由 Atlas 200I DK A2 昇腾边缘设备摄像头采集的**视频帧序列**。
-以下 {len(tasks)} 帧是按时间顺序排列的 YOLO 标注图（每帧间隔约数秒）。
-每张图上已绘制绿色检测框和红色类别标签。
+    # 时序趋势分析
+    trend_parts = []
+    if len(total_per_frame) >= 3:
+        first_half_avg = sum(total_per_frame[:len(total_per_frame)//2]) / max(1, len(total_per_frame)//2)
+        second_half_avg = sum(total_per_frame[len(total_per_frame)//2:]) / max(1, len(total_per_frame) - len(total_per_frame)//2)
+        if second_half_avg > first_half_avg * 1.3:
+            trend_parts.append("目标数量呈上升趋势，后半段明显多于前半段")
+        elif first_half_avg > second_half_avg * 1.3:
+            trend_parts.append("目标数量呈下降趋势，前半段明显多于后半段")
+        else:
+            trend_parts.append("目标数量整体稳定，未出现明显的增减趋势")
+    if max(total_per_frame) - min(total_per_frame) >= 3:
+        trend_parts.append(f"帧间波动较大（最低 {min(total_per_frame)} → 最高 {max(total_per_frame)}），视频中存在显著的场景变化")
 
-帧序列摘要（帮助你理解时间变化）：
-{frame_summary}
+    trend_text = "\n".join(f"- {t}" for t in trend_parts) if trend_parts else "帧间变化不显著"
 
-检测到的目标类别汇总：{', '.join(sorted(all_objects)) if all_objects else '无'}
-跨帧累计人数：{total_persons}，累计车辆数：{total_vehicles}
+    return f"""你正在查看一段由 Atlas 200I DK A2 昇腾边缘设备采集的**完整视频帧序列**。
+以下 {len(tasks)} 帧标注图是**从视频中自适应抽取的关键帧**（覆盖视频开头、中间和结尾，并额外选取了画面变化最剧烈的片段）。
+每张图上已用绿色框绘制检测目标，红色文字标注了类别名称和置信度。
 
-请你**基于亲眼看到的帧序列内容**（时序变化 + 帧间关系），直接输出以下三部分：
+---
 
-## 💡 场景视觉分析
-[描述你从帧序列中观察到的场景。注意：不同帧之间的变化趋势（人/车增多还是减少）、整体环境判断、是否有动态事件发生（如人员移动、车辆驶入驶出）。这些都是单帧无法提供的时序信息。]
+## 📊 帧间检测数据时序表
+
+| 帧序号 | 总目标数 | 人数 | 车辆数 | 帧间变化 |
+|--------|---------|------|--------|---------|
+{timeline}
+
+---
+
+## 📈 时序趋势分析
+
+{trend_text}
+
+检测到的非人/车的其他类别汇总：{', '.join(sorted(all_objects)) if all_objects else '无其他类别'}
+累计检测人次：{total_persons}，累计车辆次：{total_vehicles}
+
+---
+
+请你**综合以上全部帧的标注图像内容和检测数据**（不要只盯着某一帧），输出以下四部分分析：
+
+## 💡 视频场景视觉分析
+[请描述你从帧序列标注图中实际观察到的完整场景。重点分析：
+1. 整体环境是什么（室内/室外、白天/夜晚、城市/野外等）
+2. 画面中有哪些值得注意的视觉细节（物体空间关系、光照、遮挡等）
+3. **帧间变化趋势**：从早期帧到后期帧，场景中的人和物是如何变化的——哪些目标出现/消失、哪些保持不变、有没有移动轨迹
+4. 这些信息是 YOLO 数字标签无法传达的]
 
 ## ⚠️ 风险等级评估
 **风险评级**：[低风险 / 中风险 / 高风险]
-**判定依据**：[综合全部帧判断。注意是否有异常聚集、快速移动、危险行为等动态风险。]
+**判定依据**：
+- 基于全部 {len(tasks)} 帧的综合判断
+- 是否需要关注某些帧中的异常聚集/快速移动/危险行为
+- 帧间趋势是否暗示潜在风险（如人数持续增多、车辆突然出现等）
 
 ## 🛠️ 智能处置建议
-1. [基于视频理解给出边端调度指令]
+1. [基于完整的视频理解给出边端设备调度指令——是否继续监控、调整监控频率等]
 2. [是否需要人工复核或触发告警]
+3. [针对该场景类型的长期建议]
 
-请保持简洁，直接输出三部分内容。"""
+## 📋 视频摘要
+用 1-2 句话总结这段视频的主要内容（便于管理平台概览展示）。
+
+请保持分析严谨全面，直接输出四部分内容。"""
 
 
 def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
@@ -240,32 +337,44 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
             "media_type": "video", "frame_count": 0,
         }
 
-    # 从 DB 取出 task 并在有 frames 字段时提取为模拟 task 列表
+    # 从 DB 取出 task：支持两种格式
     tasks: list[dict[str, Any]] = []
-    first_task = get_edge_task(str(task_ids[0]))
-    if first_task:
-        event = first_task.get("event") or {}
-        frames = event.get("frames")
-        if frames:
-            for frame in frames:
-                url = frame.get("annotated_image_url") or ""
+    parent_task = get_edge_task(str(task_ids[0]))
+    if not parent_task:
+        print(f"[vision_analyzer] ERROR: parent task not found: {task_ids[0]}", flush=True)
+        return {
+            "answer": "", "model": "",
+            "error": f"父任务 {task_ids[0]} 不存在",
+            "media_type": "video", "frame_count": 0,
+        }
+
+    event = parent_task.get("event") or {}
+    frames = event.get("frames")
+    print(f"[vision_analyzer] parent_task_id={task_ids[0]}, has_frames={bool(frames)}, frame_count={len(frames) if frames else 0}, media_type={event.get('media_type')}", flush=True)
+
+    if frames and isinstance(frames, list) and len(frames) > 0:
+        for frame in frames:
+            url = frame.get("annotated_image_url") or ""
+            filename = frame.get("annotated_image_filename") or ""
+            if not filename and url:
                 filename = url.split("/")[-1] if "/" in url else ""
-                sim_task = {
-                    "id": first_task.get("id"),
-                    "event": {
-                        "annotated_image_filename": filename,
-                        "annotated_image_url": url,
-                        "summary": frame.get("summary", {}),
-                        "inference": frame.get("inference", {}),
-                    }
+            tasks.append({
+                "id": parent_task.get("id"),
+                "event": {
+                    "annotated_image_filename": filename,
+                    "annotated_image_url": url,
+                    "summary": frame.get("summary", {}),
+                    "inference": frame.get("inference", {}),
+                    "detections": frame.get("detections", []),
+                    "frame_index": frame.get("frame_index", 0),
                 }
-                tasks.append(sim_task)
-        else:
-            # 兼容旧的多 task 帧路径
-            for tid in task_ids:
-                task = get_edge_task(str(tid))
-                if task:
-                    tasks.append(task)
+            })
+    else:
+        # 旧版兼容：多个独立 task_id
+        for tid in task_ids:
+            task = get_edge_task(str(tid))
+            if task:
+                tasks.append(task)
     if not tasks:
         return {
             "answer": "", "model": "",
@@ -276,9 +385,21 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
     # 限制帧数
     max_frames = config.max_video_frames
     if len(tasks) > max_frames:
-        # 均匀采样
-        step = len(tasks) / max_frames
-        tasks = [tasks[int(i * step)] for i in range(max_frames)]
+        # 保留前后各 3 帧 + 中间均匀采样，确保不丢失开头和结尾信息
+        keep_front = min(3, len(tasks))
+        keep_back = min(3, len(tasks) - keep_front)
+        middle_count = max_frames - keep_front - keep_back
+        if middle_count > 0 and len(tasks) - keep_front - keep_back > 1:
+            middle_start = keep_front
+            middle_end = len(tasks) - keep_back
+            step = (middle_end - middle_start - 1) / (middle_count - 1) if middle_count > 1 else 0
+            sampled = list(tasks[:keep_front])
+            for i in range(middle_count):
+                sampled.append(tasks[middle_start + int(i * step)])
+            sampled.extend(tasks[-keep_back:] if keep_back else [])
+            tasks = sampled
+        elif middle_count <= 0:
+            tasks = tasks[:keep_front] + (tasks[-keep_back:] if keep_back else [])
 
     # 收集所有帧的 base64
     frame_blocks: list[dict[str, Any]] = []
@@ -307,6 +428,8 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
         {"type": "text", "text": prompt},
     ] + frame_blocks
 
+    print(f"[vision_analyzer] VID calling {config.model} via {config.base_url}, frames={loaded_count}...", flush=True)
+
     llm = ChatOpenAI(
         model=config.model,
         api_key=config.api_key,
@@ -322,12 +445,34 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
 
     response = llm.invoke([message])
     content: str = response.content if hasattr(response, "content") else str(response)
+    answer = content.strip() if content else ""
+
+    usage_meta = getattr(response, "usage_metadata", None) or {}
+    resp_meta = getattr(response, "response_metadata", {}) or {}
+    real_tokens = (
+        usage_meta.get("total_tokens")
+        or resp_meta.get("token_usage", {}).get("total_tokens")
+        or (len(answer) // 3 if answer else 0)
+    )
 
     return {
-        "answer": content.strip() if content else "",
+        "answer": answer,
         "model": config.model,
         "error": None,
         "media_type": "video",
         "frame_count": loaded_count,
         "frame_task_ids": [t.get("id") for t in tasks],
+        "usage": {"total_tokens": real_tokens},
+        "trace": [
+            {
+                "type": "vision_analysis",
+                "model": config.model,
+                "media_type": "video",
+                "frame_count": loaded_count,
+                "status": "success" if answer else "empty",
+                "duration_ms": None,
+                "usage": {"total_tokens": real_tokens},
+                "result": answer[:300] if answer else "",
+            }
+        ],
     }
