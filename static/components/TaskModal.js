@@ -308,16 +308,16 @@ export default {
         </footer>
       </div>
       
-      <!-- Zoom Lightbox -->
+    </div>
+    <!-- Zoom Lightbox: teleported to <body> to escape .app-shell backdrop-filter containment -->
+    <teleport to="body">
       <div v-if="isZoomed" class="zoom-lightbox" @click.stop="isZoomed = false" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.95); display: flex; align-items: center; justify-content: center; z-index: 3000; cursor: zoom-out;">
-                @click.stop="activeFrameIdx = activeFrameIdx - 1"
-                @click.stop="activeFrameIdx = activeFrameIdx + 1"
         <img :src="zoomSrc" @click.stop style="max-width: 95vw; max-height: 95vh; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
-        <div style="position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.6); font-size: 13px;">
-          {{ hasMultipleFrames ? '帧 ' + (activeFrameIdx + 1) + ' / ' + zoomFrameCount : '' }}
+        <div v-if="hasMultipleFrames" style="position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.6); font-size: 13px;">
+          帧 {{ activeFrameIdx + 1 }} / {{ zoomFrameCount }}
         </div>
         <button @click.stop="isZoomed = false" style="position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.25); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.2s;">&times;</button>
       </div>
-    </div>
+    </teleport>
   `
 };
