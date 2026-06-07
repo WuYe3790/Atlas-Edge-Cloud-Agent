@@ -465,6 +465,8 @@ createApp({
     };
 
     const checkYoloStatus = async () => {
+      // 云端研判期间不覆盖状态（避免服务器 idle 覆盖前端的 running_cloud）
+      if (yoloInferenceStatus.value === 'running_cloud') return;
       try {
         const response = await fetch(`/api/edge/yolo-status?_t=${Date.now()}`);
         const data = await response.json();
@@ -478,7 +480,8 @@ createApp({
 
     const pollYoloStatus = async () => {
       await checkYoloStatus();
-      if (yoloInferenceStatus.value !== 'idle') {
+      // 仅对板端 running_board 状态持续轮询；running_cloud 由 runAnalysis 自行管理
+      if (yoloInferenceStatus.value === 'running_board') {
         setTimeout(pollYoloStatus, 1000);
       }
     };
@@ -511,6 +514,7 @@ createApp({
     const runAnalysis = async (taskId) => {
       terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [云端研判] 正在调用 DeepSeek + SenseNova 进行双模型协同分析...\n`;
       terminalLoading.value = true;
+      yoloInferenceStatus.value = 'running_cloud';
       scrollTerminalToBottom();
 
       try {
@@ -537,6 +541,8 @@ createApp({
       } catch (err) {
         terminalLoading.value = false;
         terminalLogs.value += `[${new Date().toLocaleTimeString()}] [网络错误] 云端分析异常: ${err.message || err}\n`;
+      } finally {
+        yoloInferenceStatus.value = 'idle';
       }
     };
 

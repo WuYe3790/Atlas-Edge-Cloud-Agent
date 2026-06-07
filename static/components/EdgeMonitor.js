@@ -9,7 +9,8 @@ export default {
     terminalLogs: { type: String, default: '' },
     terminalLoading: { type: Boolean, default: false },
     sshStatus: { type: String, default: 'disconnected' },
-    sshStatusText: { type: String, default: '未连接' }
+    sshStatusText: { type: String, default: '未连接' },
+    yoloInferenceStatus: { type: String, default: 'idle' }
   },
   emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh', 'upload-success', 'log', 'run-uploaded-yolo'],
   data() {
@@ -419,9 +420,13 @@ export default {
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                     导出报告
                   </a>
-                  <button type="button" class="edge-analyze-btn" @click.stop="$emit('run-analysis', task.id)" style="padding:6px 14px; border:1px solid var(--line); border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; background:var(--accent); color:white; display: flex; align-items: center; gap: 4px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/></svg>
-                    {{ task.analysis ? '重新研判' : '云端分析' }}
+                  <button type="button" class="edge-analyze-btn"
+                    :disabled="yoloInferenceStatus !== 'idle'"
+                    @click.stop="$emit('run-analysis', task.id)"
+                    :style="{ padding:'6px 14px', border:'1px solid var(--line)', borderRadius:'6px', fontSize:'12px', fontWeight:'600', cursor: yoloInferenceStatus !== 'idle' ? 'not-allowed' : 'pointer', background: yoloInferenceStatus !== 'idle' ? '#94a3b8' : 'var(--accent)', color:'white', display:'flex', alignItems:'center', gap:'4px', opacity: yoloInferenceStatus !== 'idle' ? 0.7 : 1 }">
+                    <svg v-if="yoloInferenceStatus === 'idle'" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/></svg>
+                    <span v-if="yoloInferenceStatus === 'idle'">{{ task.analysis ? '重新研判' : '云端分析' }}</span>
+                    <span v-else>⏳ 研判中...</span>
                   </button>
                 </div>
               </div>

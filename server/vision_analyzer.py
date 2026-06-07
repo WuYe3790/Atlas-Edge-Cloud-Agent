@@ -206,64 +206,69 @@ def analyze_with_vision(task: dict[str, Any]) -> dict[str, Any]:
 # ============================================================
 
 def _build_detail_requirements(frame_count: int) -> str:
-    """根据帧数动态生成详细度要求。帧数越多，要求越详细。"""
-    if frame_count <= 12:
-        detail = """## 💡 视频场景视觉分析
-[描述你从帧序列标注图中实际观察到的完整场景。包括整体环境、视觉细节、帧间变化趋势。]
-
-## ⚠️ 风险等级评估
-**风险评级**：[低风险 / 中风险 / 高风险]
-**判定依据**：[基于全部帧的综合判断]
-
-## 🛠️ 智能处置建议
-1. [边端调度指令]
-2. [是否需要人工复核或触发告警]
-
-## 📋 视频摘要
-用 1-2 句话总结这段视频的主要内容。"""
-    elif frame_count <= 30:
+    """根据帧数动态生成详细度要求。帧数越多，要求越详细，分析内容越丰富。"""
+    if frame_count <= 20:
         detail = f"""## 💡 视频场景视觉分析
-请**逐帧仔细观察每一张标注图**，分以下小节详细描述：
-1. **整体环境与时段判断**（室内/室外、白天/夜晚、具体场所类型）
-2. **关键帧细节描述**：至少引用其中 5-8 个具体帧号，描述每帧中的视觉细节（人物位置、着装、姿态、物体、空间关系）
-3. **帧间变化趋势**：从早期到后期，场景如何变化——目标出现/消失、移动轨迹、动作变化
-4. **YOLO 无法传达的视觉信息**（光照、遮挡、镜头运动等）
+请仔细观察帧拼接图中每一格的标注图像，分以下小节详细描述：
+1. **整体环境与时段判断**：室内/室外、白天/夜晚、具体场所类型
+2. **关键帧细节描述**：至少引用其中 3-5 个具体帧号，描述每帧中的人物位置、着装、姿态、物体和空间关系
+3. **帧间变化趋势**：从开头到结尾，场景如何变化——哪些目标出现/消失/移动
+4. **YOLO 标签无法传达的视觉信息**：光照、遮挡、镜头运动等
+⚠️ 每部分内容至少 2-3 句话，总字数不少于 200 字。
 
 ## ⚠️ 风险等级评估
 **风险评级**：[低风险 / 中风险 / 高风险]
-**判定依据**：[综合 {frame_count} 帧判断，引用具体帧号说明依据。注意人群聚集、交通状况、异常行为等]
+**判定依据**：[综合 {frame_count} 帧判断，引用具体帧号，至少 2 句依据。注意人群聚集、交通状况、异常行为等]
 
 ## 🛠️ 智能处置建议
-1. [基于完整视频理解给出边端调度指令]
-2. [是否需要人工复核或触发告警]
-3. [针对该场景类型的长期建议]
+1. [基于完整视频理解给出边端调度指令，至少 1-2 句话]
+2. [是否需要人工复核或触发告警，说明理由]
 
 ## 📋 视频摘要
-用 2-3 句话总结从这 {frame_count} 帧标注图中观察到的核心内容和关键发现。"""
+用 2-3 句话总结从这 {frame_count} 帧标注图中观察到的核心内容、关键发现和整体风险判断。"""
+    elif frame_count <= 40:
+        detail = f"""## 💡 视频场景视觉分析
+请**深入观察帧拼接图中每一格的标注图像**，分以下小节详细描述（⚠️ 总字数不少于 400 字）：
+1. **整体环境与时段判断**：室内/室外、白天/夜晚、具体场所类型、是否有多个场景切换
+2. **关键帧细节描述**：至少引用 8-12 个具体帧号，逐一描述每帧中的视觉细节——人物位置/数量/着装/姿态、关键物体（车/行李/设备等）的类型和颜色、空间关系（人与人/人与物之间的距离/相对位置）
+3. **帧间变化趋势**：从开头到结尾，目标数量如何波动、人物出现/消失的具体帧段、物体的移动轨迹
+4. **YOLO 标签无法传达的视觉信息**：光照变化（变亮/变暗）、遮挡关系、镜头运动（静止/移动/旋转）、画面模糊程度等
+
+## ⚠️ 风险等级评估
+**风险评级**：[低风险 / 中风险 / 高风险]
+**判定依据**：[综合 {frame_count} 帧判断，至少 3 句具体依据。引用具体帧号说明风险来源——人群密度趋势、车辆/危险物品出现、异常行为模式等。]
+
+## 🛠️ 智能处置建议
+1. [基于完整视频理解的边端调度指令，至少 1-2 句话]
+2. [是否需要人工复核或触发告警，说明理由和紧迫程度]
+3. [针对该场景类型的长期监控建议]
+
+## 📋 视频摘要
+用 3-4 句话全面总结核心内容、关键发现和主要风险判断。"""
     else:
         detail = f"""## 💡 视频场景视觉分析
-这是一个较长视频的 {frame_count} 帧关键帧序列。请**深入分析，输出至少 500 字的详细描述**，分以下小节：
-1. **整体环境与时段判断**（室内/室外、白天/夜晚、具体场所类型、是否有多个场景切换）
-2. **分阶段帧分析**：
-   - 前段（帧 1-{frame_count//3}）：描述初始场景状态
-   - 中段（帧 {frame_count//3+1}-{frame_count*2//3}）：描述中间变化
-   - 后段（帧 {frame_count*2//3+1}-{frame_count}）：描述最终状态
-   每个阶段至少引用 3-4 个具体帧号，详细描述视觉内容
-3. **全片时序变化**：人物/车辆/物体的出现、消失、移动轨迹；场景切换；镜头运动
-4. **YOLO 标签无法传达的视觉细节**：光照变化、遮挡关系、空间密度、人物互动等
+这是一个较长视频的 {frame_count} 帧关键帧序列。请**深入全面分析，输出至少 800 字的详细描述**，分以下小节：
+1. **整体环境与时段判断**：室内/室外、白天/夜晚、具体场所类型、是否有多个场景切换。如有切换，描述每个场景的特征。
+2. **分阶段帧分析**（⚠️ 每个阶段至少 150 字，引用 4-6 个具体帧号）：
+   - 前段（帧 1-{frame_count//3}）：描述初始场景状态、人物位置、关键物体
+   - 中段（帧 {frame_count//3+1}-{frame_count*2//3}）：描述中间变化、新出现/消失的目标、场景状态转变
+   - 后段（帧 {frame_count*2//3+1}-{frame_count}）：描述最终状态、与前两阶段的对比变化
+3. **全片时序变化**：人物的出现/消失和数量波动曲线、车辆/物体的出现和移动轨迹、场景切换时间点
+4. **YOLO 标签无法传达的视觉细节**：光照变化/阴影、遮挡关系、空间密度变化、人物之间的互动模式、画面模糊/抖动等
 
 ## ⚠️ 风险等级评估
 **风险评级**：[低风险 / 中风险 / 高风险]
-**判定依据**：[分阶段评估风险。综合 {frame_count} 帧的整体趋势，引用具体帧号。注意动态风险如人群聚集趋势、车辆频繁出现、异常行为等]
+**判定依据**：[分阶段评估风险。综合 {frame_count} 帧的整体趋势，至少 4 句具体依据。引用具体帧号，注意动态风险——人群聚集趋势的速率、车辆/危险物品的出现频率和位置、异常行为（跌倒/奔跑/冲突等）。如某阶段风险高于其他阶段，请明确指出。]
 
 ## 🛠️ 智能处置建议
-1. [基于完整视频理解给出边端调度指令——是否继续监控、调整监控频率等]
-2. [是否需要人工复核或触发告警]
-3. [针对该场景类型的长期建议]
-4. [如检测到风险趋势，建议后续重点关注哪些帧段]
+1. [基于完整视频理解的边端调度指令——监控频率是否够、是否需要调整置信度阈值等]
+2. [是否需要立即人工复核或触发告警，说明紧迫程度（立即/1小时内/24小时内）]
+3. [针对该场景类型的长期建议——哪些目标类型值得持续关注、是否需要增加摄像头覆盖等]
+4. [如检测到风险趋势，建议后续重点关注哪些帧段（给出具体帧号范围）]
+5. [是否需要调整抽帧策略（加密/减疏）以更好地捕获风险事件]
 
 ## 📋 视频摘要
-用 3-4 句话全面总结这 {frame_count} 帧标注图所示的视频核心内容、关键发现和主要风险判断。"""
+用 4-5 句话全面总结核心内容、关键发现、风险判断和主要建议。"""
     return detail
 
 
@@ -348,8 +353,8 @@ def build_video_vision_prompt(
 
     trend_text = "\n".join(f"- {t}" for t in trend_parts) if trend_parts else "帧间变化不显著"
 
-    return f"""你正在查看一段由 Atlas 200I DK A2 昇腾边缘设备采集的**完整视频帧序列**。
-以下 {len(tasks)} 帧标注图是**从视频中自适应抽取的关键帧**（覆盖视频开头、中间和结尾，并额外选取了画面变化最剧烈的片段）。
+    return f"""你正在查看一段由 Atlas 200I DK A2 昇腾边缘设备采集的**视频帧序列**。
+以下 {len(tasks)} 个帧的 YOLO 标注结果被整理在时序数据表和缩略图中。
 每张图上已用绿色框绘制检测目标，红色文字标注了类别名称和置信度。
 
 ---
@@ -374,6 +379,89 @@ def build_video_vision_prompt(
 {_build_detail_requirements(len(tasks))}
 
 请直接输出以上四部分内容，用 Markdown 格式，不要额外的前言后缀。"""
+
+
+def _build_frame_strip(tasks: list[dict[str, Any]], thumb_w: int = 0, cols: int = 0) -> str | None:
+    """将所有标注帧拼成单张缩略图网格。
+
+    根据帧数自适应选择参数以控制最终 base64 大小：
+    - ≤20 帧: 800px/8列, Q=85
+    - 21-40 帧: 600px/10列, Q=75
+    - >40 帧: 500px/12列, Q=75
+    """
+    n = len(tasks)
+    if thumb_w <= 0:
+        if n <= 20:  thumb_w, cols, quality = 800, 8, 85
+        elif n <= 40: thumb_w, cols, quality = 600, 10, 75
+        else:         thumb_w, cols, quality = 500, 12, 75
+    else:
+        quality = 85
+    try:
+        import io
+        from PIL import Image
+        images: list[Image.Image] = []
+        frame_labels: list[str] = []
+        for t in tasks:
+            evt = t.get("event") or {}
+            url = evt.get("annotated_image_url") or ""
+            filename = evt.get("annotated_image_filename") or url.split("/")[-1] if "/" in url else ""
+            if not filename:
+                continue
+            img_path = EDGE_ARTIFACT_DIR / Path(filename).name
+            if not img_path.exists():
+                continue
+            try:
+                img = Image.open(img_path).convert("RGB")
+                ratio = thumb_w / img.width
+                img = img.resize((thumb_w, max(1, int(img.height * ratio))), Image.LANCZOS)
+                images.append(img)
+                fi = evt.get("frame_index", len(images) - 1)
+                summary = evt.get("summary") or {}
+                tc = summary.get("total_count", 0)
+                frame_labels.append(f"F{fi}:{tc}")
+            except Exception:
+                continue
+        if not images:
+            return None
+
+        # 统一行高为第一张的高度
+        row_h = images[0].height
+        rows = (len(images) + cols - 1) // cols
+        canvas_w = cols * thumb_w
+        canvas_h = rows * row_h
+        canvas = Image.new("RGB", (canvas_w, canvas_h), (30, 30, 30))
+        for i, img in enumerate(images):
+            r = i // cols
+            c = i % cols
+            x = c * thumb_w
+            y = r * row_h
+            canvas.paste(img, (x, y))
+            # 画帧号标签（白字黑底，稍大一些便于看清）
+            try:
+                from PIL import ImageDraw, ImageFont
+                draw = ImageDraw.Draw(canvas)
+                label = frame_labels[i] if i < len(frame_labels) else f"F{i}"
+                draw.rectangle([x, y, x + 70, y + 18], fill=(0, 0, 0))
+                draw.text((x + 3, y + 2), label, fill=(255, 255, 0))
+            except Exception:
+                pass
+
+        # 自适应质量：for-loop 从高到低尝试，最大 base64 约 4MB
+        for q in [quality, 60]:
+            quality = q
+            buf = io.BytesIO()
+            canvas.save(buf, format="JPEG", quality=quality)
+            raw_size = buf.tell()
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            b64_mb = len(b64) * 3 / 4 / 1024 / 1024
+            print(f"[vision_analyzer] frame_strip: {len(images)} frames, {cols}x{rows}, "
+                  f"raw={raw_size/1024:.0f}KB, quality={quality}, base64~{b64_mb:.1f}MB", flush=True)
+            if b64_mb < 5.0 or quality == 60:
+                return b64
+        return b64  # 降质到底
+    except Exception as e:
+        print(f"[vision_analyzer] frame_strip failed: {e}, falling back to individual frames", flush=True)
+        return None
 
 
 def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
@@ -438,20 +526,11 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
             "media_type": "video", "frame_count": 0,
         }
 
-    # 智能降帧：当帧数超过 API 限制时，保留首尾+均匀采样+高信息量帧
+    # 当帧数超过 API 限制时，不再逐一发送标注图（会导致 413），
+    # 改为生成单张帧拼接缩略图 + 完整的 YOLO 时序数据
     max_frames = config.max_video_frames
     if len(tasks) > max_frames:
-        keep_count = max(1, max_frames // 3)
-        # 首帧 + 尾帧 + 高检测量帧 + 均匀采样
-        scored = []
-        for t in tasks:
-            evt = t.get("event") or {}
-            s = evt.get("summary") or {}
-            tc = s.get("total_count", 0)
-            scored.append((tc, t))
-        # 保留首帧（index 0）和尾帧（index -1）
         keep = [tasks[0]]
-        # 均匀采样中间部分
         middle = tasks[1:-1] if len(tasks) > 2 else []
         if middle and max_frames > 3:
             step = max(1, len(middle) / (max_frames - 3))
@@ -459,7 +538,10 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
                 idx = int(i * step)
                 if idx < len(middle):
                     keep.append(middle[idx])
-        # 高检测量帧（不在已有列表中）
+        scored = []
+        for t in tasks:
+            s = (t.get("event") or {}).get("summary") or {}
+            scored.append((s.get("total_count", 0), t))
         scored.sort(key=lambda x: -x[0])
         for _, t in scored:
             if len(keep) >= max_frames:
@@ -467,22 +549,32 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
             if t not in keep:
                 keep.append(t)
         keep.append(tasks[-1])
-        tasks = sorted(set(keep), key=lambda x: tasks.index(x))  # 恢复时间顺序
+        tasks = sorted(set(keep), key=lambda x: tasks.index(x))
 
-    # 收集所有帧的 base64
-    frame_blocks: list[dict[str, Any]] = []
-    loaded_count = 0
-    for task in tasks:
-        image_b64, mime_type = _read_image_base64(task)
-        if image_b64:
-            frame_blocks.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{image_b64}",
-                    "detail": "high",
-                },
-            })
-            loaded_count += 1
+    # ---- 核心改动：帧拼接图代替多帧逐一发送 ----
+    # 生成单张帧缩略图拼接蒙太奇，大幅减小请求体大小
+    frame_strip_b64 = _build_frame_strip(tasks)
+    if frame_strip_b64:
+        frame_blocks: list[dict[str, Any]] = [{
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{frame_strip_b64}",
+                "detail": "high",
+            },
+        }]
+    else:
+        # 降级方案：逐帧发送（低帧数安全场景）
+        frame_blocks: list[dict[str, Any]] = []
+        for task in tasks:
+            image_b64, mime_type = _read_image_base64(task)
+            if image_b64:
+                frame_blocks.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{image_b64}",
+                        "detail": "high",
+                    },
+                })
 
     if not frame_blocks:
         return {
@@ -491,7 +583,15 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
             "media_type": "video", "frame_count": 0,
         }
 
+    loaded_count = len(tasks)
+
     prompt = build_video_vision_prompt(tasks)
+    # 使用帧拼接缩略图时，在 prompt 开头说明
+    if frame_strip_b64:
+        prompt = (
+            "⚠️ 注意：以下图片是全部标注帧的**缩略图拼接网格**（每列一帧，按时间从左到右、从上到下排列），"
+            "不是单张原图。请基于这张拼接图上每一格的视觉内容，结合下方的 YOLO 检测数据表进行综合分析。\n\n"
+        ) + prompt
     content_blocks: list[dict[str, Any]] = [
         {"type": "text", "text": prompt},
     ] + frame_blocks
