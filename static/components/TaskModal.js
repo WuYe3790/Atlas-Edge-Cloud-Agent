@@ -83,7 +83,7 @@ export default {
                 <div><span>任务 ID</span><code>{{ taskDetail.id }}</code></div>
                 <div><span>设备 ID</span>{{ taskDetail.device_id || taskDetail.event?.device_id || 'unknown' }}</div>
                 <div><span>主机名</span>{{ taskDetail.event?.hostname || 'unknown' }}</div>
-                <div><span>图片 ID</span>{{ taskDetail.image_id || taskDetail.event?.image_id || '' }}</div>
+                <div><span>{{ taskDetail.media_type === 'video' ? '视频文件' : '图片 ID' }}</span>{{ taskDetail.image_id || taskDetail.event?.image_id || '' }}</div>
                 <div><span>媒体类型</span><strong>{{ taskDetail.media_type === 'video' ? '🎥 视频 (Video)' : '🖼️ 图片 (Image)' }}</strong></div>
                 <div><span>来源</span>{{ taskDetail.source_type || taskDetail.event?.source_type || 'edge' }}</div>
                 <div><span>状态</span><strong>{{ taskDetail.status === 'completed' ? '已分析' : (taskDetail.status || '已接收') }}</strong></div>
