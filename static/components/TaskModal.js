@@ -121,19 +121,19 @@ export default {
                     🔍 点击放大帧 {{ (activeFrameIdx) + 1 }}
                   </div>
                 </div>
-                <!-- Thumbnails Slider -->
-                <div style="display:flex; gap:8px; overflow-x:auto; padding:4px 0;">
-                  <div v-for="(frame, fIdx) in taskDetail.event.frames" 
-                       :key="fIdx" 
+                <!-- Frame Thumbnails Grid -->
+                <div style="display:flex; flex-wrap:wrap; gap:6px; padding:4px 0; max-height:220px; overflow-y:auto;">
+                  <div v-for="(frame, fIdx) in taskDetail.event.frames"
+                       :key="fIdx"
                        @click="activeFrameIdx = fIdx"
                        :style="{
-                         flex: '0 0 70px',
-                         height: '50px',
+                         width: '80px',
+                         height: '56px',
                          borderRadius: '6px',
                          overflow: 'hidden',
                          cursor: 'pointer',
-                         border: (activeFrameIdx) === fIdx ? '2px solid var(--accent)' : '1px solid var(--line)',
-                         opacity: (activeFrameIdx) === fIdx ? '1' : '0.7',
+                         border: activeFrameIdx === fIdx ? '2px solid var(--accent)' : '1px solid var(--line)',
+                         opacity: activeFrameIdx === fIdx ? '1' : '0.7',
                          transition: 'all 0.15s ease'
                        }">
                     <img :src="frame.annotated_image_url" style="width:100%; height:100%; object-fit:cover;">
