@@ -624,6 +624,10 @@ def analyze_edge_task():
     thinking_mode = bool(payload.get("thinking_mode", True))
     vision_config = load_vision_config()
 
+    # 检查是否为视频任务：event.frames 数组存在
+    evt = task.get("event") or {}
+    is_video_task = bool(evt.get("frames")) or (evt.get("media_type") == "video")
+
     text_result: dict[str, Any] | None = None
     vision_result: dict[str, Any] | None = None
 
@@ -633,7 +637,10 @@ def analyze_edge_task():
         if mode in ("text", "both"):
             futures["text"] = executor.submit(_run_text_analysis, task, thinking_mode)
         if mode in ("vision", "both") and vision_config.is_available:
-            futures["vision"] = executor.submit(analyze_with_vision, task)
+            if is_video_task:
+                futures["vision"] = executor.submit(analyze_video_with_vision, [task_id])
+            else:
+                futures["vision"] = executor.submit(analyze_with_vision, task)
         elif mode == "vision" and not vision_config.is_available:
             return jsonify({"ok": False, "error": "VISION_API_KEY 未配置"}), 400
 
@@ -660,13 +667,19 @@ def analyze_edge_task():
 
     combined_answer = "\n\n".join(answer_parts) if answer_parts else "分析失败。"
 
+    combined_trace = []
+    if vision_result and vision_result.get("trace"):
+        combined_trace.extend(vision_result["trace"])
+    if text_result and text_result.get("trace"):
+        combined_trace.extend(text_result["trace"])
+
     analysis = {
         "answer": combined_answer,
-        "trace": (text_result or {}).get("trace", []),
+        "trace": combined_trace,
         "structured_data": (text_result or {}).get("structured_data"),
         "mode": mode,
-        "media_type": "image",
-        "frame_count": 1,
+        "media_type": (vision_result or {}).get("media_type") or ("video" if is_video_task else "image"),
+        "frame_count": (vision_result or {}).get("frame_count") or (len(evt.get("frames", [])) if is_video_task else 1),
         "text_analysis": text_result,
         "vision_analysis": vision_result,
     }

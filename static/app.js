@@ -509,23 +509,34 @@ createApp({
     };
 
     const runAnalysis = async (taskId) => {
+      terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [云端研判] 正在调用 DeepSeek + SenseNova 进行双模型协同分析...\n`;
+      terminalLoading.value = true;
+      scrollTerminalToBottom();
+
       try {
         const response = await fetch("/api/edge/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ task_id: taskId, thinking_mode: true, mode: "both" })
         });
+        terminalLoading.value = false;
         if (response.ok) {
           const data = await response.json();
           if (data.ok) {
+            terminalLogs.value += `[${new Date().toLocaleTimeString()}] [云端研判] 分析完成 | 模式: ${data.analysis?.mode || 'both'} | 媒体: ${data.analysis?.media_type === 'video' ? '视频' : '图片'} | Trace: ${(data.analysis?.trace || []).length} 条\n`;
             if (isModalOpen.value && activeTaskId.value === taskId) {
               activeTaskDetail.value = data.task;
             }
             await loadEdgeStatus();
+          } else {
+            terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] 云端分析失败: ${data.error || '未知错误'}\n`;
           }
+        } else {
+          terminalLogs.value += `[${new Date().toLocaleTimeString()}] [错误] 云端分析请求失败 HTTP ${response.status}\n`;
         }
       } catch (err) {
-        console.error("Cloud analysis error:", err);
+        terminalLoading.value = false;
+        terminalLogs.value += `[${new Date().toLocaleTimeString()}] [网络错误] 云端分析异常: ${err.message || err}\n`;
       }
     };
 

@@ -58,7 +58,7 @@ def load_vision_config() -> VisionConfig:
 # ============================================================
 
 def _read_image_base64(task: dict[str, Any]) -> tuple[str | None, str]:
-    """读取任务的任务标注图并返回 (base64_string, mime_type)。
+    """读取任务的标注图，压缩后返回 (base64_string, mime_type)。
     返回 (None, "") 表示无可用图片。
     """
     event = task.get("event") or {}
@@ -77,6 +77,22 @@ def _read_image_base64(task: dict[str, Any]) -> tuple[str | None, str]:
         return None, ""
 
     image_bytes = image_path.read_bytes()
+    # 压缩大图：超过 200KB 的标注图缩小到 900px 宽，JPEG 质量 70
+    if len(image_bytes) > 200 * 1024:
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(io.BytesIO(image_bytes))
+            w, h = img.size
+            if w > 900:
+                ratio = 900.0 / w
+                img = img.resize((900, int(h * ratio)), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=70)
+            image_bytes = buf.getvalue()
+        except Exception:
+            pass  # PIL 不可用时使用原图
+
     suffix = image_path.suffix.lower()
     mime = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -189,6 +205,68 @@ def analyze_with_vision(task: dict[str, Any]) -> dict[str, Any]:
 # 视频分析（多帧聚合）
 # ============================================================
 
+def _build_detail_requirements(frame_count: int) -> str:
+    """根据帧数动态生成详细度要求。帧数越多，要求越详细。"""
+    if frame_count <= 12:
+        detail = """## 💡 视频场景视觉分析
+[描述你从帧序列标注图中实际观察到的完整场景。包括整体环境、视觉细节、帧间变化趋势。]
+
+## ⚠️ 风险等级评估
+**风险评级**：[低风险 / 中风险 / 高风险]
+**判定依据**：[基于全部帧的综合判断]
+
+## 🛠️ 智能处置建议
+1. [边端调度指令]
+2. [是否需要人工复核或触发告警]
+
+## 📋 视频摘要
+用 1-2 句话总结这段视频的主要内容。"""
+    elif frame_count <= 30:
+        detail = f"""## 💡 视频场景视觉分析
+请**逐帧仔细观察每一张标注图**，分以下小节详细描述：
+1. **整体环境与时段判断**（室内/室外、白天/夜晚、具体场所类型）
+2. **关键帧细节描述**：至少引用其中 5-8 个具体帧号，描述每帧中的视觉细节（人物位置、着装、姿态、物体、空间关系）
+3. **帧间变化趋势**：从早期到后期，场景如何变化——目标出现/消失、移动轨迹、动作变化
+4. **YOLO 无法传达的视觉信息**（光照、遮挡、镜头运动等）
+
+## ⚠️ 风险等级评估
+**风险评级**：[低风险 / 中风险 / 高风险]
+**判定依据**：[综合 {frame_count} 帧判断，引用具体帧号说明依据。注意人群聚集、交通状况、异常行为等]
+
+## 🛠️ 智能处置建议
+1. [基于完整视频理解给出边端调度指令]
+2. [是否需要人工复核或触发告警]
+3. [针对该场景类型的长期建议]
+
+## 📋 视频摘要
+用 2-3 句话总结从这 {frame_count} 帧标注图中观察到的核心内容和关键发现。"""
+    else:
+        detail = f"""## 💡 视频场景视觉分析
+这是一个较长视频的 {frame_count} 帧关键帧序列。请**深入分析，输出至少 500 字的详细描述**，分以下小节：
+1. **整体环境与时段判断**（室内/室外、白天/夜晚、具体场所类型、是否有多个场景切换）
+2. **分阶段帧分析**：
+   - 前段（帧 1-{frame_count//3}）：描述初始场景状态
+   - 中段（帧 {frame_count//3+1}-{frame_count*2//3}）：描述中间变化
+   - 后段（帧 {frame_count*2//3+1}-{frame_count}）：描述最终状态
+   每个阶段至少引用 3-4 个具体帧号，详细描述视觉内容
+3. **全片时序变化**：人物/车辆/物体的出现、消失、移动轨迹；场景切换；镜头运动
+4. **YOLO 标签无法传达的视觉细节**：光照变化、遮挡关系、空间密度、人物互动等
+
+## ⚠️ 风险等级评估
+**风险评级**：[低风险 / 中风险 / 高风险]
+**判定依据**：[分阶段评估风险。综合 {frame_count} 帧的整体趋势，引用具体帧号。注意动态风险如人群聚集趋势、车辆频繁出现、异常行为等]
+
+## 🛠️ 智能处置建议
+1. [基于完整视频理解给出边端调度指令——是否继续监控、调整监控频率等]
+2. [是否需要人工复核或触发告警]
+3. [针对该场景类型的长期建议]
+4. [如检测到风险趋势，建议后续重点关注哪些帧段]
+
+## 📋 视频摘要
+用 3-4 句话全面总结这 {frame_count} 帧标注图所示的视频核心内容、关键发现和主要风险判断。"""
+    return detail
+
+
 def build_video_vision_prompt(
     tasks: list[dict[str, Any]],
     session_id: str = "",
@@ -293,31 +371,9 @@ def build_video_vision_prompt(
 
 ---
 
-请你**综合以上全部帧的标注图像内容和检测数据**（不要只盯着某一帧），输出以下四部分分析：
+{_build_detail_requirements(len(tasks))}
 
-## 💡 视频场景视觉分析
-[请描述你从帧序列标注图中实际观察到的完整场景。重点分析：
-1. 整体环境是什么（室内/室外、白天/夜晚、城市/野外等）
-2. 画面中有哪些值得注意的视觉细节（物体空间关系、光照、遮挡等）
-3. **帧间变化趋势**：从早期帧到后期帧，场景中的人和物是如何变化的——哪些目标出现/消失、哪些保持不变、有没有移动轨迹
-4. 这些信息是 YOLO 数字标签无法传达的]
-
-## ⚠️ 风险等级评估
-**风险评级**：[低风险 / 中风险 / 高风险]
-**判定依据**：
-- 基于全部 {len(tasks)} 帧的综合判断
-- 是否需要关注某些帧中的异常聚集/快速移动/危险行为
-- 帧间趋势是否暗示潜在风险（如人数持续增多、车辆突然出现等）
-
-## 🛠️ 智能处置建议
-1. [基于完整的视频理解给出边端设备调度指令——是否继续监控、调整监控频率等]
-2. [是否需要人工复核或触发告警]
-3. [针对该场景类型的长期建议]
-
-## 📋 视频摘要
-用 1-2 句话总结这段视频的主要内容（便于管理平台概览展示）。
-
-请保持分析严谨全面，直接输出四部分内容。"""
+请直接输出以上四部分内容，用 Markdown 格式，不要额外的前言后缀。"""
 
 
 def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
@@ -382,24 +438,36 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
             "media_type": "video", "frame_count": 0,
         }
 
-    # 限制帧数
+    # 智能降帧：当帧数超过 API 限制时，保留首尾+均匀采样+高信息量帧
     max_frames = config.max_video_frames
     if len(tasks) > max_frames:
-        # 保留前后各 3 帧 + 中间均匀采样，确保不丢失开头和结尾信息
-        keep_front = min(3, len(tasks))
-        keep_back = min(3, len(tasks) - keep_front)
-        middle_count = max_frames - keep_front - keep_back
-        if middle_count > 0 and len(tasks) - keep_front - keep_back > 1:
-            middle_start = keep_front
-            middle_end = len(tasks) - keep_back
-            step = (middle_end - middle_start - 1) / (middle_count - 1) if middle_count > 1 else 0
-            sampled = list(tasks[:keep_front])
-            for i in range(middle_count):
-                sampled.append(tasks[middle_start + int(i * step)])
-            sampled.extend(tasks[-keep_back:] if keep_back else [])
-            tasks = sampled
-        elif middle_count <= 0:
-            tasks = tasks[:keep_front] + (tasks[-keep_back:] if keep_back else [])
+        keep_count = max(1, max_frames // 3)
+        # 首帧 + 尾帧 + 高检测量帧 + 均匀采样
+        scored = []
+        for t in tasks:
+            evt = t.get("event") or {}
+            s = evt.get("summary") or {}
+            tc = s.get("total_count", 0)
+            scored.append((tc, t))
+        # 保留首帧（index 0）和尾帧（index -1）
+        keep = [tasks[0]]
+        # 均匀采样中间部分
+        middle = tasks[1:-1] if len(tasks) > 2 else []
+        if middle and max_frames > 3:
+            step = max(1, len(middle) / (max_frames - 3))
+            for i in range(max_frames - 3):
+                idx = int(i * step)
+                if idx < len(middle):
+                    keep.append(middle[idx])
+        # 高检测量帧（不在已有列表中）
+        scored.sort(key=lambda x: -x[0])
+        for _, t in scored:
+            if len(keep) >= max_frames:
+                break
+            if t not in keep:
+                keep.append(t)
+        keep.append(tasks[-1])
+        tasks = sorted(set(keep), key=lambda x: tasks.index(x))  # 恢复时间顺序
 
     # 收集所有帧的 base64
     frame_blocks: list[dict[str, Any]] = []
