@@ -1,6 +1,6 @@
 // Structured card rendering & init — extracted from travel_helpers.js
 window.initTravelHelpers = function() {
-  const messagesEl = document.querySelector("#messages");
+  const messagesEl = document.querySelector(".messages");
   if (!messagesEl) return;
   
   messagesEl.addEventListener("pointerdown", (event) => {
@@ -727,6 +727,6 @@ window.renderStructuredCardsInto = renderStructuredCardsInto;
 window.locationLabel = locationLabel;
 window.loadLocationContext = loadLocationContext;
 window.saveLocationContext = saveLocationContext;
-window.runLiveMapQueue = runLiveMapQueue;
+window.processLiveMapQueue = processLiveMapQueue;
 window.initLiveMaps = initLiveMaps;
 window.initDraggableMaps = initDraggableMaps;
