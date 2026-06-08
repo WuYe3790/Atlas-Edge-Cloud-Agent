@@ -31,6 +31,7 @@ from travel_agent.tool_pois import (
 from travel_agent.tool_hotels import search_hotel_prices
 from travel_agent.tool_flights import search_flight_options
 from travel_agent.tool_rag import search_local_knowledge
+from travel_agent.tool_web_search import web_search
 from travel_agent.skills import city_transit_skill, intercity_transport_skill
 
 
@@ -106,6 +107,7 @@ TRAVEL_TOOLS = [
     search_nearby_pois,
     search_hotel_prices,
     search_local_knowledge,
+    web_search,
     get_place_location,
     get_map_marker_link,
 ]
