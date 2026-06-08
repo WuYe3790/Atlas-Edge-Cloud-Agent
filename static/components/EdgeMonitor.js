@@ -23,7 +23,10 @@ export default {
       uploadedFilePath: '',
       activeFrameIdx: 0,
       isZoomed: false,
-      zoomedImageUrl: ''
+      zoomedImageUrl: '',
+      // Live preview state
+      latestFrame: { frame_url: '', fps: 0, detections_count: 0, timestamp: '' },
+      framePollTimer: null,
     };
   },
   watch: {
@@ -31,7 +34,22 @@ export default {
       this.activeFrameIdx = 0;
       this.isZoomed = false;
       this.zoomedImageUrl = '';
+    },
+    yoloInferenceStatus(newVal, oldVal) {
+      if (newVal === 'running_board') {
+        this.startFramePolling();
+      } else if (oldVal === 'running_board' && newVal !== 'running_board') {
+        this.stopFramePolling();
+      }
+    },
+  },
+  mounted() {
+    if (this.yoloInferenceStatus === 'running_board') {
+      this.startFramePolling();
     }
+  },
+  beforeUnmount() {
+    this.stopFramePolling();
   },
   updated() {
     if (this.isTerminalOpen) {
@@ -175,7 +193,37 @@ export default {
       if (this.zoomedImageUrl) {
         this.isZoomed = true;
       }
-    }
+    },
+    // Live preview polling
+    async loadLatestFrame() {
+      try {
+        const resp = await fetch('/api/edge/latest-frame');
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.ok) {
+            this.latestFrame = {
+              frame_url: data.frame_url || '',
+              fps: data.fps || 0,
+              detections_count: data.detections_count || 0,
+              timestamp: data.timestamp || '',
+            };
+          }
+        }
+      } catch {
+        // Silently ignore polling errors — preview is best-effort
+      }
+    },
+    startFramePolling() {
+      this.stopFramePolling();
+      this.loadLatestFrame();
+      this.framePollTimer = setInterval(() => this.loadLatestFrame(), 1000);
+    },
+    stopFramePolling() {
+      if (this.framePollTimer) {
+        clearInterval(this.framePollTimer);
+        this.framePollTimer = null;
+      }
+    },
   },
   template: `
     <section class="edge-cloud-panel">
@@ -225,6 +273,34 @@ export default {
             </div>
             <div class="upload-subtext">
               支持 JPG, JPEG, PNG, WEBP, MP4, AVI, MKV, MOV 格式
+            </div>
+          </div>
+        </div>
+
+        <!-- Live YOLO Inference Preview Card -->
+        <div v-if="latestFrame.frame_url" class="live-preview-card">
+          <div class="live-preview-header">
+            <span class="live-preview-dot"></span>
+            <span class="live-preview-label">实时 YOLO 推理预览</span>
+            <span class="live-preview-meta">
+              <span v-if="latestFrame.fps" class="live-preview-fps">{{ latestFrame.fps }} FPS</span>
+              <span class="live-preview-count">{{ latestFrame.detections_count || 0 }} 目标</span>
+            </span>
+          </div>
+          <div class="live-preview-viewport">
+            <img :src="latestFrame.frame_url"
+                 class="live-preview-image"
+                 alt="实时 YOLO 推理帧" />
+          </div>
+        </div>
+        <div v-else-if="yoloInferenceStatus === 'running_board'" class="live-preview-card live-preview-waiting">
+          <div class="live-preview-header">
+            <span class="live-preview-dot waiting"></span>
+            <span class="live-preview-label">等待边端推理帧...</span>
+          </div>
+          <div class="live-preview-viewport">
+            <div class="live-preview-placeholder">
+              <span>📡 边端正在运行 YOLO 推理，等待第一帧标注画面产生...</span>
             </div>
           </div>
         </div>

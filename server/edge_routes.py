@@ -13,6 +13,7 @@ import time
 import paramiko
 
 from server.bootstrap import PROJECT_ROOT
+from server.camera_stream import register_camera_routes, update_latest_frame
 from server.vision_analyzer import (
     analyze_with_vision,
     analyze_video_with_vision,
@@ -133,6 +134,18 @@ def receive_edge_event():
     task = create_edge_task(event, status="received")
     event = _save_embedded_artifacts(task["id"], event)
     task = update_edge_task_event(task["id"], event) or task
+
+    # Update live-preview cache when an annotated frame arrives
+    annotated_url = event.get("annotated_image_url")
+    if annotated_url:
+        inference = event.get("inference") if isinstance(event.get("inference"), dict) else {}
+        detections = event.get("detections") if isinstance(event.get("detections"), list) else []
+        update_latest_frame(
+            frame_url=annotated_url,
+            fps=inference.get("fps", 0),
+            detections_count=len(detections),
+        )
+
     need_cloud_analysis = bool(event.get("edge_decision", {}).get("need_cloud_analysis", True))
     return jsonify(
         {
@@ -1863,4 +1876,10 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video, forc
     finally:
         set_yolo_status("idle")
 
+
+# ---------------------------------------------------------------------------
+# Camera stream live-preview routes (laptop webcam → Atlas VideoCapture input)
+# ---------------------------------------------------------------------------
+
+register_camera_routes(edge_bp)
 
