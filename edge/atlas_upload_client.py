@@ -385,7 +385,14 @@ def send_heartbeat(server: str, args: argparse.Namespace) -> dict[str, Any]:
 
 
 def watch_heartbeat(server: str, args: argparse.Namespace) -> int:
+    """持续心跳 + 断网检测 + 恢复后自动清理离线队列。
+
+    维护 was_offline 状态标志：
+    - 首次心跳失败 → 标记离线，记录日志，继续本地运行
+    - 心跳恢复成功 + 之前离线 → 自动调用 retry_pending_events()
+    """
     print(f"[heartbeat] watching {server.rstrip('/')} every {args.interval}s. Press Ctrl+C to stop.", file=sys.stderr)
+    was_offline = False
     while True:
         try:
             result = send_heartbeat(server, args)
@@ -404,8 +411,15 @@ def watch_heartbeat(server: str, args: argparse.Namespace) -> int:
                 ),
                 flush=True,
             )
-        except RequestException as exc:
-            print(f"[heartbeat] failed: {exc}", file=sys.stderr)
+            # 刚从离线恢复 → 自动清理 pending 队列
+            if was_offline:
+                was_offline = False
+                print("[reconnect] 网络已恢复，自动重试离线队列...", file=sys.stderr)
+                retry_pending_events(server.rstrip("/"), args.timeout)
+        except Exception as exc:
+            if not was_offline:
+                was_offline = True
+                print(f"[offline] 无法连接云端 {server}，进入离线模式。错误: {exc}", file=sys.stderr)
         time.sleep(max(1, args.interval))
 
 
