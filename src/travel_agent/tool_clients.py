@@ -20,10 +20,26 @@ def _get_env_key(name: str) -> str:
     return os.getenv(name, "").strip()
 
 
-def _request_json(url: str, params: dict[str, object], timeout: int = 10, headers: dict[str, str] | None = None) -> dict:
-    response = requests.get(url, params=params, headers=headers, timeout=timeout)
+def _request_json(url: str, params: dict[str, object], timeout: int = 10, headers: dict[str, str] | None = None, proxies: dict[str, str | None] | None = None) -> dict:
+    response = requests.get(url, params=params, headers=headers, timeout=timeout, proxies=proxies)
     response.raise_for_status()
     return response.json()
+
+
+def _rapidapi_request_json(url: str, params: dict[str, object], timeout: int = 30) -> dict:
+    """RapidAPI GET with proxy bypass and one automatic retry on 429."""
+    headers = _rapidapi_headers()
+    # Bypass system proxy (VPN) — RapidAPI must be reached directly
+    no_proxy = {"http": None, "https": None}
+    try:
+        return _request_json(url, params, timeout=timeout, headers=headers, proxies=no_proxy)
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else 0
+        if status_code == 429:
+            # Single retry after 2 s backoff for rate-limit
+            time.sleep(2.0)
+            return _request_json(url, params, timeout=timeout, headers=headers, proxies=no_proxy)
+        raise
 
 
 def _amap_key() -> str:

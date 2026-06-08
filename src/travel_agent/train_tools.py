@@ -180,30 +180,38 @@ class _McpClient:
 # ---------------------------------------------------------------------------
 
 _mcp_client: _McpClient | None = None
-_mcp_checked: bool = False  # separate from None → we tried and it failed
+_mcp_failed_at: float = 0.0  # timestamp of last failed start attempt
+_MCP_RETRY_COOLDOWN: float = 60.0  # seconds before retrying after a failed start
 
 
 def _get_mcp_client() -> _McpClient | None:
-    global _mcp_client, _mcp_checked
+    global _mcp_client, _mcp_failed_at
 
-    if _mcp_client is not None and _mcp_client._process.poll() is not None:
+    # If we have a working client, verify it is still alive
+    if _mcp_client is not None:
+        if _mcp_client._process.poll() is None:
+            return _mcp_client
+        # Process died — clear and try again
         _mcp_client = None
-        _mcp_checked = False
 
-    if _mcp_checked:
-        return _mcp_client
+    # A previous start attempt failed — don't retry until cooldown expires
+    if _mcp_failed_at > 0 and time.monotonic() - _mcp_failed_at < _MCP_RETRY_COOLDOWN:
+        return None
 
-    _mcp_checked = True
+    # Attempt to start MCP
     if not _check_node_available():
+        _mcp_failed_at = time.monotonic()
         print("12306-MCP: npx 不可用，火车票工具已禁用。")
         return None
 
     try:
         _mcp_client = _McpClient()
+        _mcp_failed_at = 0.0  # clear failure timestamp on success
         print("12306-MCP: 已连接，火车票工具可用。")
     except Exception as exc:
-        print(f"12306-MCP 启动失败: {exc}")
+        _mcp_failed_at = time.monotonic()
         _mcp_client = None
+        print(f"12306-MCP 启动失败: {exc}")
     return _mcp_client
 
 

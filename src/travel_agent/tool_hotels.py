@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
 from travel_agent.config import load_llm_config
-from travel_agent.tool_clients import AMAP_BASE_URL, _amap_key, _rapidapi_headers, _rapidapi_host, _rapidapi_key, _request_json
+from travel_agent.tool_clients import AMAP_BASE_URL, _amap_key, _rapidapi_headers, _rapidapi_host, _rapidapi_key, _rapidapi_request_json, _request_json
 from travel_agent.tool_data import HOTEL_CITY_ALIASES
 from travel_agent.tool_formatters import (
     _first_non_empty,
@@ -33,11 +33,10 @@ def _booking_search_destinations(city: str) -> list[dict]:
         return []
     host = _rapidapi_host()
     for query in _hotel_city_queries(city):
-        data = _request_json(
+        data = _rapidapi_request_json(
             f"https://{host}/api/v1/hotels/searchDestination",
             {"query": query},
             timeout=20,
-            headers=_rapidapi_headers(),
         )
         items = data.get("data") if isinstance(data.get("data"), list) else []
         if items:
@@ -280,7 +279,7 @@ def search_hotel_prices(
 
         safe_limit = max(1, min(int(limit), 10))
         host = _rapidapi_host()
-        data = _request_json(
+        data = _rapidapi_request_json(
             f"https://{host}/api/v1/hotels/searchHotels",
             {
                 "dest_id": dest_id,
@@ -292,7 +291,6 @@ def search_hotel_prices(
                 "currency_code": currency,
             },
             timeout=30,
-            headers=_rapidapi_headers(),
         )
         hotels = ((data.get("data") or {}).get("hotels") or []) if isinstance(data.get("data"), dict) else []
         if data.get("status") is False or not hotels:
