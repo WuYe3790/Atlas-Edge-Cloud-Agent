@@ -1,8 +1,8 @@
 import { createApp, ref, reactive, onMounted, watch, nextTick } from 'vue';
-import SidebarComponent from './components/SidebarComponent.js?v=20260607-clean';
-import TravelAssistant from './components/TravelAssistant.js?v=20260607-clean';
-import EdgeMonitor from './components/EdgeMonitor.js?v=20260607-clean';
-import TaskModal from './components/TaskModal.js?v=20260607-clean';
+import SidebarComponent from './components/SidebarComponent.js?v=20260608-css-split';
+import TravelAssistant from './components/TravelAssistant.js?v=20260608-css-split';
+import EdgeMonitor from './components/EdgeMonitor.js?v=20260608-css-split';
+import TaskModal from './components/TaskModal.js?v=20260608-css-split';
 
 createApp({
   components: {
