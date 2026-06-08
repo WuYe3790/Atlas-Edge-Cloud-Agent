@@ -104,7 +104,7 @@ export default {
       </div>
 
       <!-- Tab Content Area -->
-      <div class="sidebar-tab-content-wrapper" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column;">
+      <div class="sidebar-tab-content-wrapper">
         <!-- Travel Mode - History Tab -->
         <div v-if="activeMode === 'travel' && activeTab === 'history'" class="sidebar-tab-content active">
           <section class="history-panel">
@@ -212,28 +212,28 @@ export default {
         </div>
 
         <!-- Edge-Cloud Mode - Device Monitor Tab -->
-        <div v-if="activeMode === 'edge'" class="sidebar-tab-content active" style="padding: 16px; display: flex; flex-direction: column; height: 100%; overflow: hidden;">
+        <div v-if="activeMode === 'edge'" class="sidebar-tab-content active edge-sidebar-panel">
           
           <!-- Device List Header (Vercel Style) -->
-          <div class="device-list-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); flex-shrink:0;">
-            <span style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">
+          <div class="device-list-header">
+            <span class="device-count-label">
               设备状态 ({{ devices.filter(d => d.online).length }}/{{ devices.length }})
             </span>
           </div>
 
           <!-- Device status scrollable area -->
-          <div class="edge-devices-dashboard-grid" style="flex: 1; overflow-y: auto; padding-right: 4px; display: block; margin-bottom: 12px;">
-            <div v-if="!devices.length" class="edge-empty" style="text-align: center; padding: 20px;">
-              <p style="margin-bottom: 8px;">暂无边端设备状态</p>
+          <div class="edge-devices-dashboard-grid edge-sidebar-scroll">
+            <div v-if="!devices.length" class="edge-empty edge-empty-sidebar">
+              <p class="edge-empty-text">暂无边端设备状态</p>
             </div>
             
-            <div v-for="device in devices.slice(0, 1)" :key="device.device_id" class="edge-device-detail-view" style="display:flex; flex-direction:column; gap:16px;">
-              <div class="device-card-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <div v-for="device in devices.slice(0, 1)" :key="device.device_id" class="edge-device-detail-view">
+              <div class="device-card-header">
                 <div class="device-name-area">
-                  <h4 style="margin:0; font-size:14px; font-weight:700; color:var(--text)">
+                  <h4>
                     {{ device.device_id }}
                   </h4>
-                  <span style="font-size:11px; color:var(--muted)">主机: {{ device.hostname }}</span>
+                  <span>主机: {{ device.hostname }}</span>
                 </div>
                 <span class="device-status-badge" :class="device.online ? 'online' : 'offline'">
                   {{ device.online ? '在线' : '离线' }}
@@ -242,15 +242,15 @@ export default {
               
               <div class="device-card-metrics">
                 <div class="device-metric-group">
-                  <h5 style="margin:0 0 6px 0; font-size:12px; font-weight:600; color:var(--text)">⚡ 边端 YOLO 推理性能</h5>
-                  <div class="device-perf-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px; background:rgba(100,116,139,0.04); padding:8px; border-radius:6px; border:none;">
-                    <div><span style="font-size:10px; color:var(--muted); display:block;">帧率 (FPS)</span><strong style="font-size:12px; color:var(--text)">{{ device.online && device.latest_fps ? device.latest_fps + ' FPS' : '无数据' }}</strong></div>
-                    <div><span style="font-size:10px; color:var(--muted); display:block;">延迟 (Latency)</span><strong style="font-size:12px; color:var(--text)">{{ device.online && device.latest_latency_ms ? device.latest_latency_ms + ' ms' : '无数据' }}</strong></div>
+                  <h5 class="device-metric-group-title">⚡ 边端 YOLO 推理性能</h5>
+                  <div class="device-perf-grid">
+                    <div><span>帧率 (FPS)</span><strong>{{ device.online && device.latest_fps ? device.latest_fps + ' FPS' : '无数据' }}</strong></div>
+                    <div><span>延迟 (Latency)</span><strong>{{ device.online && device.latest_latency_ms ? device.latest_latency_ms + ' ms' : '无数据' }}</strong></div>
                   </div>
                 </div>
                 
-                <div class="device-metric-group" style="margin-top:8px;">
-                  <h5 style="margin:0 0 6px 0; font-size:12px; font-weight:600; color:var(--text)">📊 硬件指标实时状态</h5>
+                <div class="device-metric-group metric-group-spacer">
+                  <h5 class="device-metric-group-title">📊 硬件指标实时状态</h5>
                   
                   <!-- CPU Load -->
                   <div class="device-metric-row" data-tooltip="系统平均负载 (Loadavg 1m)：过去1分钟内处于可运行或等待状态的平均任务数。">
@@ -258,7 +258,7 @@ export default {
                       <span>📈 系统平均负载 (CPU Load 1m)</span>
                       <strong v-if="device.online && device.system_metrics.loadavg">
                         {{ Math.min(100, Math.round((parseFloat(device.system_metrics.loadavg['1m'] || device.system_metrics.loadavg.split?.(' ')[0] || 0)) * 33)) }}%
-                        <small style="color:var(--muted); font-weight:400;">(负载: {{ device.system_metrics.loadavg['1m'] || device.system_metrics.loadavg.split?.(' ')[0] || 0 }})</small>
+                        <small class="metric-unit-note">(负载: {{ device.system_metrics.loadavg['1m'] || device.system_metrics.loadavg.split?.(' ')[0] || 0 }})</small>
                       </strong>
                       <strong v-else>无数据</strong>
                     </div>
@@ -273,7 +273,7 @@ export default {
                       <span>💾 系统内存使用率 (RAM Memory)</span>
                       <strong v-if="device.online && device.system_metrics.memory">
                         {{ device.system_metrics.memory.used_percent }}%
-                        <small style="color:var(--muted); font-weight:400;">({{ device.system_metrics.memory.available_mb }}MB 可用)</small>
+                        <small class="metric-unit-note">({{ device.system_metrics.memory.available_mb }}MB 可用)</small>
                       </strong>
                       <strong v-else>无数据</strong>
                     </div>
@@ -288,7 +288,7 @@ export default {
                       <span>🧠 昇腾 NPU 核心利用率</span>
                       <strong>
                         {{ device.system_metrics.npu.utilization_percent }}%
-                        <small style="color:var(--muted); font-weight:400;">(温度: {{ device.system_metrics.npu.temperature_c }}℃)</small>
+                        <small class="metric-unit-note">(温度: {{ device.system_metrics.npu.temperature_c }}℃)</small>
                       </strong>
                     </div>
                     <div class="metric-progress-bg">
@@ -302,7 +302,7 @@ export default {
                       <span>🧠 NPU 大页内存 (Hugepages)</span>
                       <strong>
                         {{ device.system_metrics.npu.memory_used_mb / device.system_metrics.npu.memory_total_mb * 100 }}%
-                        <small style="color:var(--muted); font-weight:400;">(100% 预留)</small>
+                        <small class="metric-unit-note">(100% 预留)</small>
                       </strong>
                     </div>
                     <div class="metric-progress-bg">
@@ -312,49 +312,46 @@ export default {
                 </div>
               </div>
 
-              <div class="device-card-footer" style="margin-top:12px; padding-top:8px; border-top:1px solid var(--line); font-size:10px; color:var(--muted);">
+              <div class="device-card-footer">
                 <span>最近活跃: {{ device.latest_image_id || '无任务' }} · {{ device.age_seconds != null ? device.age_seconds + ' 秒前' : '无记录' }}</span>
               </div>
             </div>
           </div>
 
           <!-- Board SSH Control Panel (Pinned at the bottom!) -->
-          <div class="board-control-section" style="padding-top:16px; border-top:1px solid var(--line); flex-shrink: 0; background: transparent;">
-            <h5 style="margin:0 0 10px 0; font-size:12px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:6px;">
+          <div class="board-control-section">
+            <h5 class="board-control-title">
               <span>🔌 板端 SSH 物理控制</span>
             </h5>
             <!-- Force Cloud Multimodal Analysis Toggle (Vercel Switch style) -->
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding:8px; background:rgba(59,130,246,0.05); border:1px solid rgba(59,130,246,0.1); border-radius:8px;">
-              <div style="display:flex; flex-direction:column; gap:2px;">
-                <span style="font-size:11.5px; font-weight:700; color:var(--text)">强制云端大模型推理</span>
-                <span style="font-size:9.5px; color:var(--muted)">开启后跳过边端决策评估</span>
+            <div class="cloud-force-toggle">
+              <div class="cloud-force-label-col">
+                <span class="cloud-force-title-text">强制云端大模型推理</span>
+                <span class="cloud-force-subtitle-text">开启后跳过边端决策评估</span>
               </div>
               <label class="switch-toggle">
                 <input type="checkbox" :checked="forceCloud" @change="$emit('update:forceCloud', $event.target.checked)">
                 <span class="switch-slider"></span>
               </label>
             </div>
-            <div class="board-control-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-              <button class="control-btn" type="button" @click="$emit('control-device', 'start_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(59,130,246,0.3); border-radius:6px; background:rgba(59,130,246,0.05); color:var(--accent); cursor:pointer; transition:all 0.2s;">启动后台心跳</button>
-              <button class="control-btn" type="button" @click="$emit('control-device', 'stop_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid rgba(239,68,68,0.3); border-radius:6px; background:rgba(239,68,68,0.05); color:#ef4444; cursor:pointer; transition:all 0.2s;">停止后台心跳</button>
-              <button class="control-btn" type="button" @click="$emit('control-device', 'trigger_heartbeat')" style="padding:6px 8px; font-size:11px; font-weight:600; border:1px solid var(--line); border-radius:6px; background:var(--panel-solid); color:var(--text); cursor:pointer; grid-column:span 2; transition:all 0.2s;">⚡ 单次即时上报心跳</button>
+            <div class="board-control-grid">
+              <button class="control-btn control-btn-start" type="button" @click="$emit('control-device', 'start_heartbeat')">启动后台心跳</button>
+              <button class="control-btn control-btn-stop" type="button" @click="$emit('control-device', 'stop_heartbeat')">停止后台心跳</button>
+              <button class="control-btn control-btn-trigger" type="button" @click="$emit('control-device', 'trigger_heartbeat')">⚡ 单次即时上报心跳</button>
               <button v-if="yoloInferenceStatus === 'running_board'"
-                      class="control-btn stop-yolo-btn" type="button" 
-                      @click="$emit('control-device', 'stop_yolo')" 
-                      style="padding:8px; font-size:11px; font-weight:700; border:1px solid #ef4444; border-radius:6px; background:#ef4444; color:white; cursor:pointer; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px;">
+                      class="control-btn stop-yolo-btn control-btn-yolo-stop" type="button"
+                      @click="$emit('control-device', 'stop_yolo')">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
                 ⏹️ 终止 YOLO 推理
               </button>
               <button v-else-if="yoloInferenceStatus === 'running_cloud'"
-                      class="control-btn" type="button" disabled
-                      style="padding:8px; font-size:11px; font-weight:700; border:1px solid #f59e0b; border-radius:6px; background:#f59e0b; color:white; cursor:not-allowed; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px; opacity:0.9;">
-                <div class="spinner-loader" style="width: 10px; height: 10px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                      class="control-btn control-btn-yolo-running" type="button" disabled>
+                <div class="spinner-loader control-yolo-spinner"></div>
                 🧠 云端研判中...
               </button>
               <button v-else
-                      class="control-btn" type="button" 
-                      @click="$emit('control-device', 'run_yolo')" 
-                      style="padding:8px; font-size:11px; font-weight:700; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:white; cursor:pointer; grid-column:span 2; transition:all 0.2s; display:flex; align-items:center; justify-content:center; gap:4px;">
+                      class="control-btn control-btn-yolo-run" type="button"
+                      @click="$emit('control-device', 'run_yolo')">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 远程运行 YOLO 推理
               </button>

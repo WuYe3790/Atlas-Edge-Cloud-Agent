@@ -819,6 +819,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  padding: 16px;
+  overflow: hidden;
 }
 
 .edge-panel-header {
@@ -1955,5 +1957,58 @@ input:checked + .switch-slider:before {
 
 /* Detection summary text */
 .detection-summary-text { font-size: 13px; margin-top: 8px; color: var(--muted); }
+
+/* ====== Sidebar Component: Inline Style Extraction ====== */
+.sidebar-tab-content-wrapper { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+
+.device-list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+
+.device-count-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+
+.edge-devices-dashboard-grid.edge-sidebar-scroll { flex: 1; overflow-y: auto; padding-right: 4px; display: block; margin-bottom: 12px; }
+
+.edge-empty-sidebar { text-align: center; padding: 20px; }
+
+.edge-empty-text { margin-bottom: 8px; }
+
+.edge-device-detail-view { display: flex; flex-direction: column; gap: 16px; }
+
+.edge-device-detail-view .device-card-header { align-items: center; margin-bottom: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+
+.edge-device-detail-view .device-perf-grid { background: rgba(100, 116, 139, 0.04); padding: 8px; border-radius: 6px; border: none; }
+
+.device-metric-group-title { margin: 0 0 6px 0; font-size: 12px; font-weight: 600; color: var(--text); }
+
+.metric-group-spacer { margin-top: 8px; }
+
+.metric-unit-note { color: var(--muted); font-weight: 400; }
+
+.board-control-section { padding-top: 16px; border-top: 1px solid var(--line); flex-shrink: 0; background: transparent; }
+
+.board-control-title { margin: 0 0 10px 0; font-size: 12px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 6px; }
+
+.cloud-force-toggle { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px; background: rgba(59, 130, 246, 0.05); border: 1px solid rgba(59, 130, 246, 0.1); border-radius: 8px; }
+
+.cloud-force-label-col { display: flex; flex-direction: column; gap: 2px; }
+
+.cloud-force-title-text { font-size: 11.5px; font-weight: 700; color: var(--text); }
+
+.cloud-force-subtitle-text { font-size: 9.5px; color: var(--muted); }
+
+.board-control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.control-btn-start { padding: 6px 8px; font-size: 11px; font-weight: 600; border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; background: rgba(59, 130, 246, 0.05); color: var(--accent); cursor: pointer; transition: all 0.2s; }
+
+.control-btn-stop { padding: 6px 8px; font-size: 11px; font-weight: 600; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; background: rgba(239, 68, 68, 0.05); color: #ef4444; cursor: pointer; transition: all 0.2s; }
+
+.control-btn-trigger { padding: 6px 8px; font-size: 11px; font-weight: 600; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-solid); color: var(--text); cursor: pointer; grid-column: span 2; transition: all 0.2s; }
+
+.control-btn-yolo-stop { padding: 8px; font-size: 11px; font-weight: 700; border: 1px solid #ef4444; border-radius: 6px; background: #ef4444; color: white; cursor: pointer; grid-column: span 2; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 4px; }
+
+.control-btn-yolo-running { padding: 8px; font-size: 11px; font-weight: 700; border: 1px solid #f59e0b; border-radius: 6px; background: #f59e0b; color: white; cursor: not-allowed; grid-column: span 2; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 4px; opacity: 0.9; }
+
+.control-btn-yolo-run { padding: 8px; font-size: 11px; font-weight: 700; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: white; cursor: pointer; grid-column: span 2; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 4px; }
+
+.control-yolo-spinner { width: 10px; height: 10px; border: 2px solid rgba(255, 255, 255, 0.2); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; }
 
 
