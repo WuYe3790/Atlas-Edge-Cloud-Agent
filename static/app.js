@@ -58,6 +58,52 @@ createApp({
     const showInputTips = ref(false);
     let inputTipTimer = null;
 
+    // Input suggestion smart parsing (ported from old project)
+    const tipSeparatorPattern = /[\s,.;:!?，。；：！？、（）()【】[\]{}<>《》"'""''\n\r\t]/;
+    const tipTriggerChars = "从到去往在";
+    const tipTriggerWords = ["出发地", "目的地", "起点", "终点", "附近", "前往", "出发", "查询", "搜索", "查", "搜"];
+    const tipIgnorePrefixPattern = /^(帮我|我想|我打算|想要|计划|明天|今天|后天|查|查询|搜索|看看|一下)$/;
+
+    function getTipQuery(text) {
+      const cursor = text.length;
+      const beforeCursor = text.slice(0, cursor);
+      let start = cursor;
+      while (start > 0 && !tipSeparatorPattern.test(text[start - 1])) {
+        start -= 1;
+      }
+
+      let triggerStart = -1;
+      for (const char of tipTriggerChars) {
+        const index = beforeCursor.lastIndexOf(char);
+        if (index > triggerStart) triggerStart = index;
+      }
+      for (const word of tipTriggerWords) {
+        const index = beforeCursor.lastIndexOf(word);
+        if (index >= 0 && index + word.length > triggerStart) {
+          triggerStart = index + word.length - 1;
+        }
+      }
+      if (triggerStart >= start) {
+        start = triggerStart + 1;
+      }
+
+      let raw = text.slice(start, cursor);
+      const leadingSpaces = raw.match(/^\s*/)?.[0].length || 0;
+      start += leadingSpaces;
+      raw = raw.trimStart();
+
+      let keyword = raw.trim();
+      if (keyword.startsWith("一下")) {
+        start += 2;
+        keyword = keyword.slice(2).trim();
+      }
+      if (!keyword || tipIgnorePrefixPattern.test(keyword)) {
+        return { keyword: "", start, end: cursor };
+      }
+
+      return { keyword, start, end: cursor };
+    }
+
     // SSE generation specific state (passed to loading status renderer)
     const generationStatus = ref('');
     const generationTrace = ref([]);
@@ -278,22 +324,30 @@ createApp({
       }
     };
 
-    // Input tips loading
+    // Input tips loading (smart keyword extraction ported from old project)
     const loadInputTips = async () => {
       if (!inputSuggest.value || !chatInput.value.trim()) {
         showInputTips.value = false;
         return;
       }
+      const { keyword } = getTipQuery(chatInput.value);
+      if (keyword.length < 2 || keyword.length > 16) {
+        showInputTips.value = false;
+        return;
+      }
       try {
-        const params = new URLSearchParams({ keywords: chatInput.value });
+        const params = new URLSearchParams({ keywords: keyword });
         const city = locationContext.value.city || locationContext.value.province || "";
         if (city) params.set("city", city);
-        
+
         const response = await fetch(`/api/amap/input-tips?${params.toString()}`);
         const data = await response.json();
         const tips = Array.isArray(data.tips) ? data.tips.filter(tip => tip.name) : [];
         if (tips.length) {
-          inputTips.value = tips.map(tip => tip.name);
+          inputTips.value = tips.map(tip => ({
+            name: tip.name,
+            district: tip.district || tip.address || ""
+          }));
           showInputTips.value = true;
         } else {
           showInputTips.value = false;
@@ -304,9 +358,12 @@ createApp({
     };
 
     const selectTip = (tip) => {
-      chatInput.value = tip;
+      const name = typeof tip === 'string' ? tip : tip.name;
+      const { keyword, start, end } = getTipQuery(chatInput.value);
+      const prefix = chatInput.value.slice(0, start);
+      const suffix = chatInput.value.slice(end);
+      chatInput.value = keyword ? `${prefix}${name}${suffix}` : `${chatInput.value}${name}`;
       showInputTips.value = false;
-      // Refocus text area if possible
     };
 
     // Chat Dialog submission

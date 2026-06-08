@@ -205,11 +205,12 @@ export default {
         <div class="input-wrap">
           <textarea id="messageInput" v-model="localChatInput" rows="2" placeholder="请输入你的出行需求，例如：明天从宁波去舟山玩1天，想看风景吃海鲜..." @keydown="handleKeydown"></textarea>
           
-          <!-- Input suggestions block -->
+          <!-- Input suggestions block (smart replacement ported from old project) -->
           <div id="inputTips" v-if="showInputTips && inputTips.length" class="input-tips">
-            <div v-for="tip in inputTips" :key="tip" class="tip-item" @click="$emit('select-tip', tip)">
-              {{ tip }}
-            </div>
+            <button v-for="tip in inputTips" :key="tip.name" type="button" class="input-tip" @mousedown.prevent="$emit('select-tip', tip)">
+              <strong>{{ tip.name }}</strong>
+              <span>{{ tip.district }}</span>
+            </button>
           </div>
         </div>
         <button id="sendBtn" class="send-btn" type="submit" :disabled="isGenerating || !localChatInput.trim()">
