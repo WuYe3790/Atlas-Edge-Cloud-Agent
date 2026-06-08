@@ -1,12 +1,13 @@
 """
 Laptop camera capture + MJPEG streaming + latest-frame cache
-+ one-click Atlas YOLO auto-launch via SSH.
-
-Flask routes are registered on the edge blueprint via register_camera_routes().
++ one-click Atlas YOLO auto-launch via SSH
++ SSE push for low-latency frame updates to browser.
 """
 from __future__ import annotations
 
+import json
 import os
+import queue
 import socket
 import threading
 import time
@@ -34,6 +35,44 @@ _JPEG_QUALITY = 80
 
 
 # ---------------------------------------------------------------------------
+# SSE subscriber queue — push frame updates to all connected browsers
+# ---------------------------------------------------------------------------
+
+_sse_queues: list[queue.Queue[str | None]] = []
+_sse_lock = threading.Lock()
+
+
+def _sse_broadcast(data: str) -> None:
+    """Push a data line to every connected SSE subscriber."""
+    with _sse_lock:
+        dead: list[int] = []
+        for idx, q in enumerate(_sse_queues):
+            try:
+                q.put_nowait(data)
+            except queue.Full:
+                dead.append(idx)
+        for idx in reversed(dead):
+            _sse_queues.pop(idx)
+
+
+def _sse_subscribe() -> queue.Queue[str | None]:
+    """Register a new SSE subscriber. Returns a queue the subscriber reads from."""
+    q: queue.Queue[str | None] = queue.Queue(maxsize=32)
+    with _sse_lock:
+        _sse_queues.append(q)
+    return q
+
+
+def _sse_unsubscribe(q: queue.Queue[str | None]) -> None:
+    """Remove a subscriber queue."""
+    with _sse_lock:
+        try:
+            _sse_queues.remove(q)
+        except ValueError:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Latest annotated-frame cache (updated by edge event handler)
 # ---------------------------------------------------------------------------
 
@@ -51,12 +90,17 @@ def update_latest_frame(
     fps: float = 0,
     detections_count: int = 0,
 ) -> None:
-    """Record the most recent YOLO-annotated frame for the live-preview card."""
+    """Record the most recent YOLO-annotated frame and push to SSE subscribers."""
+    payload = {
+        "frame_url": frame_url,
+        "fps": float(fps or 0),
+        "detections_count": int(detections_count or 0),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
     with _frame_lock:
-        _latest_frame_cache["frame_url"] = frame_url
-        _latest_frame_cache["fps"] = float(fps or 0)
-        _latest_frame_cache["detections_count"] = int(detections_count or 0)
-        _latest_frame_cache["timestamp"] = datetime.now(timezone.utc).isoformat()
+        _latest_frame_cache.update(payload)
+    # Push to all connected browsers via SSE
+    _sse_broadcast(json.dumps(payload, ensure_ascii=False))
 
 
 def get_latest_frame() -> dict:
@@ -387,6 +431,41 @@ def _camera_status_route():
     return jsonify({"ok": True, "camera_active": is_laptop_camera_active()})
 
 
+def _camera_sse_route():
+    """GET /api/edge/latest-frame/stream — SSE push of latest YOLO frame.
+
+    Browser EventSource receives 'data: {json}' events in real time,
+    eliminating the 1-second polling delay.
+    """
+    q = _sse_subscribe()
+    # Send current frame immediately on connect
+    info = get_latest_frame()
+
+    def generate():
+        try:
+            if info.get("frame_url"):
+                yield f"data: {json.dumps(info, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'camera_active': is_laptop_camera_active()}, ensure_ascii=False)}\n\n"
+            while True:
+                data = q.get()
+                if data is None:
+                    break
+                yield f"data: {data}\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            _sse_unsubscribe(q)
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def register_camera_routes(edge_bp) -> None:
     """Add camera-related routes to the edge blueprint."""
     edge_bp.add_url_rule(
@@ -421,4 +500,9 @@ def register_camera_routes(edge_bp) -> None:
         "camera_stop",
         _camera_stop_route,
         methods=["POST"],
+    )
+    edge_bp.add_url_rule(
+        "/api/edge/latest-frame/stream",
+        "frame_sse",
+        _camera_sse_route,
     )

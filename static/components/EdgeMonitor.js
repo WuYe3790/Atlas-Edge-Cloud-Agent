@@ -28,8 +28,9 @@ export default {
       windowHost: location.hostname || '127.0.0.1',
       laptopCameraActive: false,
       cameraControlLoading: false,
+      livePreviewExpanded: false,  // independent expand/collapse
       latestFrame: { frame_url: '', fps: 0, detections_count: 0, timestamp: '' },
-      framePollTimer: null,
+      frameEventSource: null,  // SSE for real-time frame pushes
     };
   },
   watch: {
@@ -38,22 +39,25 @@ export default {
       this.isZoomed = false;
       this.zoomedImageUrl = '';
     },
+    // Auto-expand preview card when YOLO starts, collapse when stopped
     yoloInferenceStatus(newVal, oldVal) {
       if (newVal === 'running_board') {
-        this.startFramePolling();
+        this.livePreviewExpanded = true;
+        this.startFrameSSE();
       } else if (oldVal === 'running_board' && newVal !== 'running_board') {
-        this.stopFramePolling();
+        this.stopFrameSSE();
       }
     },
   },
   mounted() {
     if (this.yoloInferenceStatus === 'running_board') {
-      this.startFramePolling();
+      this.livePreviewExpanded = true;
+      this.startFrameSSE();
     }
     this.checkCameraStatus();
   },
   beforeUnmount() {
-    this.stopFramePolling();
+    this.stopFrameSSE();
   },
   updated() {
     if (this.isTerminalOpen) {
@@ -198,13 +202,17 @@ export default {
         this.isZoomed = true;
       }
     },
-    // Live preview polling
-    async loadLatestFrame() {
-      try {
-        const resp = await fetch('/api/edge/latest-frame');
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.ok) {
+    // Live preview — SSE-based real-time frame push (zero polling delay)
+    startFrameSSE() {
+      this.stopFrameSSE();
+      const es = new EventSource('/api/edge/latest-frame/stream');
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.camera_active !== undefined) {
+            this.laptopCameraActive = data.camera_active;
+          }
+          if (data.frame_url) {
             this.latestFrame = {
               frame_url: data.frame_url || '',
               fps: data.fps || 0,
@@ -212,20 +220,27 @@ export default {
               timestamp: data.timestamp || '',
             };
           }
-        }
-      } catch {
-        // Silently ignore polling errors — preview is best-effort
+        } catch { /* ignore malformed events */ }
+      };
+      es.onerror = () => {
+        // Reconnect after 2 s on error
+        es.close();
+        setTimeout(() => { if (this.livePreviewExpanded) this.startFrameSSE(); }, 2000);
+      };
+      this.frameEventSource = es;
+    },
+    stopFrameSSE() {
+      if (this.frameEventSource) {
+        this.frameEventSource.close();
+        this.frameEventSource = null;
       }
     },
-    startFramePolling() {
-      this.stopFramePolling();
-      this.loadLatestFrame();
-      this.framePollTimer = setInterval(() => this.loadLatestFrame(), 1000);
-    },
-    stopFramePolling() {
-      if (this.framePollTimer) {
-        clearInterval(this.framePollTimer);
-        this.framePollTimer = null;
+    toggleLivePreview() {
+      this.livePreviewExpanded = !this.livePreviewExpanded;
+      if (this.livePreviewExpanded) {
+        this.startFrameSSE();
+      } else {
+        this.stopFrameSSE();
       }
     },
     // Laptop camera controls
@@ -236,11 +251,8 @@ export default {
           const data = await resp.json();
           if (data.ok && data.camera_active) {
             this.laptopCameraActive = true;
-            this.startFramePolling();
-            const frameData = await fetch('/api/edge/latest-frame').then(r => r.json()).catch(() => ({}));
-            if (frameData.ok) {
-              this.latestFrame = frameData;
-            }
+            this.livePreviewExpanded = true;
+            this.startFrameSSE();
           }
         }
       } catch { /* best-effort */ }
@@ -258,8 +270,8 @@ export default {
         if (!wasActive && data.ok) {
           // Starting camera + YOLO
           this.laptopCameraActive = true;
-          this.startFramePolling();
-          // Auto-open terminal drawer and show output
+          this.livePreviewExpanded = true;
+          this.startFrameSSE();
           this.$emit('log', `\n[${new Date().toLocaleTimeString()}] [摄像头] 笔电摄像头推流已启动 → ${data.stream_url || '/camera/stream'}\n`);
           if (data.stdout) {
             this.$emit('log', data.stdout);
@@ -268,21 +280,20 @@ export default {
             this.$emit('log', `[${new Date().toLocaleTimeString()}] ${data.message}\n`);
           }
           this.$emit('toggle-terminal');
-          // Notify parent to set yoloInferenceStatus = running_board
           this.$emit('camera-yolo-started');
           this.$emit('log', `[${new Date().toLocaleTimeString()}] [YOLO] Atlas 边端推理已启动，等待第一帧标注画面...\n`);
         } else if (!wasActive && !data.ok) {
-          // Start failed
           this.$emit('log', `\n[${new Date().toLocaleTimeString()}] [错误] 摄像头/YOLO 启动失败: ${data.error || '未知错误'}\n`);
           if (data.stdout) {
             this.$emit('log', data.stdout);
           }
           this.$emit('toggle-terminal');
         } else if (wasActive) {
-          // Stopping
+          // Stopping — clear everything and collapse
           this.laptopCameraActive = false;
-          this.stopFramePolling();
+          this.stopFrameSSE();
           this.latestFrame = { frame_url: '', fps: 0, detections_count: 0, timestamp: '' };
+          this.livePreviewExpanded = false;
           this.$emit('camera-yolo-stopped');
           this.$emit('log', `[${new Date().toLocaleTimeString()}] [摄像头] 摄像头已关闭，${data.yolo_stopped || 'YOLO 已终止'}\n`);
         }
@@ -357,31 +368,42 @@ export default {
           </div>
         </div>
 
-        <!-- Live Camera + YOLO Preview Card -->
-        <div v-if="laptopCameraActive" class="live-preview-card">
+        <!-- Live Camera + YOLO Preview Card (independent expand/collapse) -->
+        <div v-if="livePreviewExpanded" class="live-preview-card">
           <div class="live-preview-header">
             <span class="live-preview-dot" :class="{ waiting: !latestFrame.frame_url }"></span>
             <span class="live-preview-label">
-              {{ latestFrame.frame_url ? '实时 YOLO 推理预览' : '笔电摄像头画面 (等待 Atlas YOLO...)' }}
+              {{ laptopCameraActive ? (latestFrame.frame_url ? '实时 YOLO 推理预览' : '笔电摄像头画面 (等待 Atlas YOLO...)') : '实时预览已停止' }}
             </span>
             <span class="live-preview-meta">
               <span v-if="latestFrame.fps" class="live-preview-fps">{{ latestFrame.fps }} FPS</span>
               <span v-if="latestFrame.detections_count" class="live-preview-count">{{ latestFrame.detections_count || 0 }} 目标</span>
             </span>
+            <button type="button" class="live-preview-close-btn" title="收起预览" @click="livePreviewExpanded = false; stopFrameSSE()">✕</button>
           </div>
           <div class="live-preview-viewport">
-            <!-- Show YOLO-annotated frame when available -->
-            <img v-if="latestFrame.frame_url"
+            <img v-if="laptopCameraActive && latestFrame.frame_url"
                  :key="latestFrame.frame_url"
                  :src="latestFrame.frame_url"
                  class="live-preview-image"
                  alt="实时 YOLO 推理帧" />
-            <!-- Fallback: show raw laptop camera MJPEG stream -->
-            <img v-else
+            <img v-else-if="laptopCameraActive"
                  src="/camera/stream"
                  class="live-preview-image"
                  alt="笔电摄像头实时画面" />
+            <div v-else class="live-preview-placeholder">
+              <p>摄像头未在运行</p>
+              <button type="button" class="live-preview-start-btn" @click="toggleLaptopCamera">📷 开启笔电摄像头</button>
+            </div>
           </div>
+        </div>
+        <!-- Restore bar when preview is collapsed -->
+        <div v-else class="live-preview-restore-bar">
+          <span class="live-preview-restore-label">
+            <span class="live-preview-dot" :class="{ waiting: !laptopCameraActive }" style="display:inline-block;vertical-align:middle;margin-right:6px;"></span>
+            {{ laptopCameraActive ? '实时预览已收起' : '实时预览' }}
+          </span>
+          <button type="button" class="live-preview-restore-btn" @click="toggleLivePreview">展开预览</button>
         </div>
 
         <!-- Tasks Grid (Occupies full 100% width) -->
