@@ -102,6 +102,8 @@
       @log="(text) => terminalLogs += text"
       @upload-success="loadEdgeStatus"
       @run-uploaded-yolo="runUploadedYolo"
+      @camera-yolo-started="yoloInferenceStatus = 'running_board'"
+      @camera-yolo-stopped="yoloInferenceStatus = 'idle'"
     ></edge-monitor>
     
     <!-- Task Detail Modal -->

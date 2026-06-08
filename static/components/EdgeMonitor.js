@@ -12,7 +12,7 @@ export default {
     sshStatusText: { type: String, default: '未连接' },
     yoloInferenceStatus: { type: String, default: 'idle' }
   },
-  emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh', 'upload-success', 'log', 'run-uploaded-yolo'],
+  emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh', 'upload-success', 'log', 'run-uploaded-yolo', 'camera-yolo-started', 'camera-yolo-stopped'],
   data() {
     return {
       expandedTaskId: null,
@@ -237,6 +237,10 @@ export default {
           if (data.ok && data.camera_active) {
             this.laptopCameraActive = true;
             this.startFramePolling();
+            const frameData = await fetch('/api/edge/latest-frame').then(r => r.json()).catch(() => ({}));
+            if (frameData.ok) {
+              this.latestFrame = frameData;
+            }
           }
         }
       } catch { /* best-effort */ }
@@ -244,22 +248,50 @@ export default {
     async toggleLaptopCamera() {
       if (this.cameraControlLoading) return;
       this.cameraControlLoading = true;
+      const wasActive = this.laptopCameraActive;
       try {
-        const endpoint = this.laptopCameraActive
+        const endpoint = wasActive
           ? '/api/edge/camera/stop'
-          : '/api/edge/camera/start';
+          : '/api/edge/camera/start-yolo';
         const resp = await fetch(endpoint, { method: 'POST' });
         const data = await resp.json();
-        if (data.ok) {
-          this.laptopCameraActive = data.camera_active;
-          if (this.laptopCameraActive) {
-            this.startFramePolling();
-          } else {
-            this.stopFramePolling();
-            this.latestFrame = { frame_url: '', fps: 0, detections_count: 0, timestamp: '' };
+        if (!wasActive && data.ok) {
+          // Starting camera + YOLO
+          this.laptopCameraActive = true;
+          this.startFramePolling();
+          // Auto-open terminal drawer and show output
+          this.$emit('log', `\n[${new Date().toLocaleTimeString()}] [摄像头] 笔电摄像头推流已启动 → ${data.stream_url || '/camera/stream'}\n`);
+          if (data.stdout) {
+            this.$emit('log', data.stdout);
           }
+          if (data.message) {
+            this.$emit('log', `[${new Date().toLocaleTimeString()}] ${data.message}\n`);
+          }
+          this.$emit('toggle-terminal');
+          // Notify parent to set yoloInferenceStatus = running_board
+          this.$emit('camera-yolo-started');
+          this.$emit('log', `[${new Date().toLocaleTimeString()}] [YOLO] Atlas 边端推理已启动，等待第一帧标注画面...\n`);
+        } else if (!wasActive && !data.ok) {
+          // Start failed
+          this.$emit('log', `\n[${new Date().toLocaleTimeString()}] [错误] 摄像头/YOLO 启动失败: ${data.error || '未知错误'}\n`);
+          if (data.stdout) {
+            this.$emit('log', data.stdout);
+          }
+          this.$emit('toggle-terminal');
+        } else if (wasActive) {
+          // Stopping
+          this.laptopCameraActive = false;
+          this.stopFramePolling();
+          this.latestFrame = { frame_url: '', fps: 0, detections_count: 0, timestamp: '' };
+          this.$emit('camera-yolo-stopped');
+          this.$emit('log', `[${new Date().toLocaleTimeString()}] [摄像头] 摄像头已关闭，${data.yolo_stopped || 'YOLO 已终止'}\n`);
         }
-      } catch { /* silently ignore — toggle is best-effort */ }
+      } catch (err) {
+        this.$emit('log', `[${new Date().toLocaleTimeString()}] [错误] 摄像头控制异常: ${err.message || err}\n`);
+        if (!wasActive) {
+          this.$emit('toggle-terminal');
+        }
+      }
       finally { this.cameraControlLoading = false; }
     },
   },
@@ -330,26 +362,25 @@ export default {
           <div class="live-preview-header">
             <span class="live-preview-dot" :class="{ waiting: !latestFrame.frame_url }"></span>
             <span class="live-preview-label">
-              {{ latestFrame.frame_url ? '实时 YOLO 推理预览' : '笔电摄像头推流中' }}
+              {{ latestFrame.frame_url ? '实时 YOLO 推理预览' : '笔电摄像头画面 (等待 Atlas YOLO...)' }}
             </span>
             <span class="live-preview-meta">
               <span v-if="latestFrame.fps" class="live-preview-fps">{{ latestFrame.fps }} FPS</span>
-              <span v-if="latestFrame.detections_count" class="live-preview-count">{{ latestFrame.detections_count }} 目标</span>
+              <span v-if="latestFrame.detections_count" class="live-preview-count">{{ latestFrame.detections_count || 0 }} 目标</span>
             </span>
           </div>
           <div class="live-preview-viewport">
+            <!-- Show YOLO-annotated frame when available -->
             <img v-if="latestFrame.frame_url"
+                 :key="latestFrame.frame_url"
                  :src="latestFrame.frame_url"
                  class="live-preview-image"
                  alt="实时 YOLO 推理帧" />
-            <div v-else class="live-preview-placeholder">
-              <p style="margin:0 0 8px;">📡 摄像头已启动，推流地址：</p>
-              <code style="background:#1e293b;color:#38bdf8;padding:4px 10px;border-radius:4px;font-size:12px;">http://{{ windowHost }}:5000/camera/stream</code>
-              <p style="margin:12px 0 0;font-size:11px;color:#64748b;">
-                Atlas 端运行：<br/>
-                python3 atlas_yolo_detect_and_upload.py --camera http://{{ windowHost }}:5000/camera/stream --upload ...
-              </p>
-            </div>
+            <!-- Fallback: show raw laptop camera MJPEG stream -->
+            <img v-else
+                 src="/camera/stream"
+                 class="live-preview-image"
+                 alt="笔电摄像头实时画面" />
           </div>
         </div>
 

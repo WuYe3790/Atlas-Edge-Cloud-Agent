@@ -1,15 +1,23 @@
 """
-Laptop camera capture + MJPEG streaming + latest-frame cache.
+Laptop camera capture + MJPEG streaming + latest-frame cache
++ one-click Atlas YOLO auto-launch via SSH.
 
 Flask routes are registered on the edge blueprint via register_camera_routes().
 """
 from __future__ import annotations
 
+import os
+import socket
 import threading
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import cv2
-from flask import Response, jsonify
+import paramiko
+from flask import Response, jsonify, request
+
+from server.bootstrap import PROJECT_ROOT
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +103,199 @@ def is_laptop_camera_active() -> bool:
         return _camera_active
 
 
+# ---------------------------------------------------------------------------
+# SSH helpers for Atlas YOLO remote launch
+# ---------------------------------------------------------------------------
+
+def _atlas_ssh_client() -> paramiko.SSHClient:
+    board_ip = os.getenv("ATLAS_BOARD_IP", "192.168.0.2").strip()
+    board_user = os.getenv("ATLAS_BOARD_USER", "root").strip()
+    board_password = os.getenv("ATLAS_BOARD_PASSWORD", "Mind@123").strip()
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(
+        hostname=board_ip,
+        username=board_user,
+        password=board_password,
+        timeout=8,
+    )
+    return ssh
+
+
+def _resolve_server_url(request_host: str) -> str:
+    """Discover the laptop IP that Atlas can reach."""
+    host = request_host.split(":")[0]
+    if host in ("127.0.0.1", "localhost"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("192.168.0.2", 22))
+            host = s.getsockname()[0]
+            s.close()
+        except Exception:
+            try:
+                host = socket.gethostbyname(socket.gethostname())
+            except Exception:
+                host = "192.168.0.101"
+    port = request_host.split(":")[1] if ":" in request_host else "5000"
+    return f"http://{host}:{port}"
+
+
+def _sync_atlas_script(ssh: paramiko.SSHClient, board_home: str) -> str:
+    """Sync atlas_yolo_detect_and_upload.py to the board via SFTP.
+
+    Returns the target script path on the board.
+    """
+    local_path = str(PROJECT_ROOT / "edge" / "atlas_yolo_detect_and_upload.py")
+    remote_path = f"{board_home}/atlas_yolo_detect_and_upload.py"
+    try:
+        sftp = ssh.open_sftp()
+        sftp.put(local_path, remote_path)
+        sftp.close()
+    except Exception as exc:
+        print(f"[camera] SFTP sync warning: {exc}")
+    return remote_path
+
+
+def start_yolo_on_atlas(request_host: str) -> dict:
+    """Start YOLO streaming on Atlas via SSH and return terminal output."""
+    _start_camera()
+
+    server_url = _resolve_server_url(request_host)
+    stream_url = f"{server_url}/camera/stream"
+    board_home = "/home/HwHiAiUser"
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    try:
+        ssh = _atlas_ssh_client()
+    except Exception as exc:
+        _stop_camera()
+        return {
+            "ok": False,
+            "camera_active": False,
+            "error": f"SSH 连接 Atlas 失败: {exc}",
+            "stdout": "",
+        }
+
+    try:
+        # 1. Kill any existing YOLO process
+        ssh.exec_command(
+            "pkill -f 'atlas_yolo_detect_and_upload.py' || true"
+        )
+        time.sleep(0.5)
+
+        # 2. Sync the latest script
+        script_path = _sync_atlas_script(ssh, board_home)
+
+        # 3. Build and execute the YOLO command
+        yolo_dir = f"{board_home}/samples/notebooks/01-yolov5"
+        python_bin = "/usr/local/miniconda3/bin/python3"
+
+        run_cmd = (
+            f"cd {yolo_dir} && "
+            f"source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
+            f"nohup {python_bin} -u {script_path} "
+            f"--camera {stream_url} "
+            f"--model yolo.om "
+            f"--labels coco_names.txt "
+            f"--server {server_url} "
+            f"--upload --force-cloud"
+        )
+        daemon_cmd = (
+            f"setsid bash -c '{run_cmd} >> {board_home}/yolo_camera.log 2>&1 &'"
+            f" < /dev/null > /dev/null 2>&1"
+        )
+
+        _sin, _sout, _serr = ssh.exec_command(daemon_cmd)
+        _sin.close()
+        stdout_lines.append(_sout.read().decode("utf-8", errors="ignore"))
+        stderr_lines.append(_serr.read().decode("utf-8", errors="ignore"))
+        time.sleep(2.5)
+
+        # 4. Verify YOLO is running
+        _sin, pgrep_out, _serr = ssh.exec_command(
+            "pgrep -f 'atlas_yolo_detect_and_upload.py' || true"
+        )
+        pids = pgrep_out.read().decode("utf-8", errors="ignore").strip()
+        pgrep_out.close()
+
+        if not pids:
+            # Try to read tail of log for diagnostics
+            _sin, log_out, _serr = ssh.exec_command(
+                f"tail -30 {board_home}/yolo_camera.log 2>/dev/null || echo '(日志不存在)'"
+            )
+            log_tail = log_out.read().decode("utf-8", errors="ignore")
+            log_out.close()
+            _stop_camera()
+            return {
+                "ok": False,
+                "camera_active": False,
+                "error": "YOLO 进程未能成功启动，请检查 Atlas 环境。",
+                "stdout": f"命令:\n{run_cmd}\n\n日志末尾:\n{log_tail}",
+            }
+
+        # 5. Read initial log output
+        _sin, log_out, _serr = ssh.exec_command(
+            f"tail -20 {board_home}/yolo_camera.log 2>/dev/null || echo '(日志不可读)'"
+        )
+        log_tail = log_out.read().decode("utf-8", errors="ignore")
+        log_out.close()
+
+        return {
+            "ok": True,
+            "camera_active": True,
+            "message": f"笔电摄像头推流已启动，Atlas YOLO 推理已在后台运行 (PID: {pids})。",
+            "stream_url": stream_url,
+            "server_url": server_url,
+            "pid": pids,
+            "stdout": (
+                f"[camera] 摄像头推流: {server_url}/camera/stream\n"
+                f"[ssh] 连接 Atlas 成功\n"
+                f"[yolo] 已启动 YOLO 推理 (PID: {pids})\n"
+                f"[yolo] 命令: {run_cmd}\n\n"
+                f"--- Atlas 日志 ---\n{log_tail}"
+            ),
+        }
+
+    except Exception as exc:
+        _stop_camera()
+        return {
+            "ok": False,
+            "camera_active": False,
+            "error": f"远程执行异常: {exc}",
+            "stdout": "\n".join(stdout_lines),
+        }
+    finally:
+        ssh.close()
+
+
+def stop_yolo_on_atlas() -> str:
+    """SSH to Atlas and kill the YOLO process. Returns a status string."""
+    try:
+        ssh = _atlas_ssh_client()
+    except Exception as exc:
+        return f"SSH 连接失败，无法远程停止 YOLO: {exc}"
+
+    try:
+        _sin, _sout, _serr = ssh.exec_command(
+            "pkill -f 'atlas_yolo_detect_and_upload.py' || true"
+        )
+        _sout.read()
+        # Also clear the camera-related YOLO status
+        time.sleep(0.3)
+        return "已通过 SSH 终止 Atlas 上的 YOLO 推理进程。"
+    except Exception as exc:
+        return f"远程终止 YOLO 失败: {exc}"
+    finally:
+        ssh.close()
+
+
+# ---------------------------------------------------------------------------
+# MJPEG stream generator
+# ---------------------------------------------------------------------------
+
 def _generate_mjpeg():
     """Flask streaming generator: multipart/x-mixed-replace JPEG frames."""
     _start_camera()
@@ -139,6 +340,39 @@ def _latest_frame_route():
     return jsonify({"ok": True, **info})
 
 
+def _camera_start_route():
+    """POST /api/edge/camera/start — start the laptop camera stream (no YOLO)."""
+    try:
+        _start_camera()
+        return jsonify({"ok": True, "camera_active": True, "stream_url": "/camera/stream"})
+    except Exception as exc:
+        return jsonify({"ok": False, "camera_active": False, "error": str(exc)}), 500
+
+
+def _camera_start_yolo_route():
+    """POST /api/edge/camera/start-yolo — start camera + auto-launch YOLO on Atlas."""
+    request_host = request.host or "127.0.0.1:5000"
+    result = start_yolo_on_atlas(request_host)
+    status_code = 200 if result.get("ok") else 500
+    return jsonify(result), status_code
+
+
+def _camera_stop_route():
+    """POST /api/edge/camera/stop — stop camera AND kill YOLO on Atlas."""
+    _stop_camera()
+    yolo_msg = stop_yolo_on_atlas()
+    return jsonify({
+        "ok": True,
+        "camera_active": False,
+        "yolo_stopped": yolo_msg,
+    })
+
+
+def _camera_status_route():
+    """GET /api/edge/camera/status — check camera state."""
+    return jsonify({"ok": True, "camera_active": is_laptop_camera_active()})
+
+
 def register_camera_routes(edge_bp) -> None:
     """Add camera-related routes to the edge blueprint."""
     edge_bp.add_url_rule(
@@ -152,9 +386,20 @@ def register_camera_routes(edge_bp) -> None:
         _latest_frame_route,
     )
     edge_bp.add_url_rule(
+        "/api/edge/camera/status",
+        "camera_status",
+        _camera_status_route,
+    )
+    edge_bp.add_url_rule(
         "/api/edge/camera/start",
         "camera_start",
         _camera_start_route,
+        methods=["POST"],
+    )
+    edge_bp.add_url_rule(
+        "/api/edge/camera/start-yolo",
+        "camera_start_yolo",
+        _camera_start_yolo_route,
         methods=["POST"],
     )
     edge_bp.add_url_rule(
@@ -163,28 +408,3 @@ def register_camera_routes(edge_bp) -> None:
         _camera_stop_route,
         methods=["POST"],
     )
-    edge_bp.add_url_rule(
-        "/api/edge/camera/status",
-        "camera_status",
-        _camera_status_route,
-    )
-
-
-def _camera_start_route():
-    """POST /api/edge/camera/start — start the laptop camera stream."""
-    try:
-        _start_camera()
-        return jsonify({"ok": True, "camera_active": True, "stream_url": "/camera/stream"})
-    except Exception as exc:
-        return jsonify({"ok": False, "camera_active": False, "error": str(exc)}), 500
-
-
-def _camera_stop_route():
-    """POST /api/edge/camera/stop — stop the laptop camera stream."""
-    _stop_camera()
-    return jsonify({"ok": True, "camera_active": False})
-
-
-def _camera_status_route():
-    """GET /api/edge/camera/status — check camera state."""
-    return jsonify({"ok": True, "camera_active": is_laptop_camera_active()})
