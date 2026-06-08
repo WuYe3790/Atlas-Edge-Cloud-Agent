@@ -11,6 +11,7 @@ export default {
     isGenerating: { type: Boolean, default: false },
     inputTips: { type: Array, default: () => [] },
     showInputTips: { type: Boolean, default: false },
+    inputTipsDismissed: { type: Boolean, default: false },
     sidebarCollapsed: { type: Boolean, default: false },
     generationStatus: { type: String, default: '' },
     generationTrace: { type: Array, default: () => [] },
@@ -25,7 +26,9 @@ export default {
     'clear-messages',
     'locate',
     'toggle-sidebar',
-    'select-tip'
+    'select-tip',
+    'dismiss-input-tips',
+    'restore-input-tips'
   ],
   computed: {
     localChatInput: {
@@ -207,10 +210,21 @@ export default {
           
           <!-- Input suggestions block (smart replacement ported from old project) -->
           <div id="inputTips" v-if="showInputTips && inputTips.length" class="input-tips">
+            <div class="input-tips-header">
+              <span class="input-tips-header-label">地点联想</span>
+              <button type="button" class="input-tips-dismiss-btn" title="收起联想" @mousedown.prevent="$emit('dismiss-input-tips')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
             <button v-for="tip in inputTips" :key="tip.name" type="button" class="input-tip" @mousedown.prevent="$emit('select-tip', tip)">
               <strong>{{ tip.name }}</strong>
               <span>{{ tip.district }}</span>
             </button>
+          </div>
+          <!-- Auto-suggest dismissed restore bar -->
+          <div v-if="inputTipsDismissed && localChatInput.trim()" class="input-tips-restore-bar">
+            <span>地点联想已收起</span>
+            <button type="button" class="input-tips-restore-btn" @click="$emit('restore-input-tips')">展开</button>
           </div>
         </div>
         <button id="sendBtn" class="send-btn" type="submit" :disabled="isGenerating || !localChatInput.trim()">

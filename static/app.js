@@ -56,6 +56,7 @@ createApp({
     
     const inputTips = ref([]);
     const showInputTips = ref(false);
+    const inputTipsDismissed = ref(false);
     let inputTipTimer = null;
 
     // Input suggestion smart parsing (ported from old project)
@@ -326,7 +327,7 @@ createApp({
 
     // Input tips loading (smart keyword extraction ported from old project)
     const loadInputTips = async () => {
-      if (!inputSuggest.value || !chatInput.value.trim()) {
+      if (!inputSuggest.value || inputTipsDismissed.value || !chatInput.value.trim()) {
         showInputTips.value = false;
         return;
       }
@@ -366,6 +367,18 @@ createApp({
       showInputTips.value = false;
     };
 
+    const dismissInputTips = () => {
+      showInputTips.value = false;
+      inputTipsDismissed.value = true;
+    };
+
+    const restoreInputTips = () => {
+      inputTipsDismissed.value = false;
+      // Immediately re-fetch suggestions for current input
+      clearTimeout(inputTipTimer);
+      inputTipTimer = setTimeout(loadInputTips, 80);
+    };
+
     // Chat Dialog submission
     const getConversationHistory = () => {
       return messages.value
@@ -383,6 +396,7 @@ createApp({
 
       chatInput.value = "";
       showInputTips.value = false;
+      inputTipsDismissed.value = false;
       
       // Add user message
       messages.value.push({
@@ -894,6 +908,7 @@ createApp({
 
     watch(inputSuggest, (newVal) => {
       localStorage.setItem(INPUT_SUGGEST_KEY, newVal ? "true" : "false");
+      inputTipsDismissed.value = false;
       if (!newVal) {
         showInputTips.value = false;
       }
@@ -949,6 +964,7 @@ createApp({
       inputSuggest,
       inputTips,
       showInputTips,
+      inputTipsDismissed,
       generationStatus,
       generationTrace,
       generationStats,
@@ -981,6 +997,8 @@ createApp({
       clearMessages,
       useSkill,
       selectTip,
+      dismissInputTips,
+      restoreInputTips,
       requestBrowserLocation,
       manualHeartbeat,
       runAnalysis,

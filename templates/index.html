@@ -69,6 +69,7 @@
       :is-generating="isGenerating"
       :input-tips="inputTips"
       :show-input-tips="showInputTips"
+      :input-tips-dismissed="inputTipsDismissed"
       :sidebar-collapsed="sidebarCollapsed"
       :generation-status="generationStatus"
       :generation-trace="generationTrace"
@@ -78,6 +79,8 @@
       @locate="requestBrowserLocation"
       @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
       @select-tip="selectTip"
+      @dismiss-input-tips="dismissInputTips"
+      @restore-input-tips="restoreInputTips"
     ></travel-assistant>
 
     <!-- Edge Monitor Panel (takes full width of the remaining viewport) -->
