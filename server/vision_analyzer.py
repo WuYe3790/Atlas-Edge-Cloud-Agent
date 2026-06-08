@@ -385,15 +385,13 @@ def _build_frame_strip(tasks: list[dict[str, Any]], thumb_w: int = 0, cols: int 
     """将所有标注帧拼成单张缩略图网格。
 
     根据帧数自适应选择参数以控制最终 base64 大小：
-    - ≤20 帧: 800px/8列, Q=85
-    - 21-40 帧: 600px/10列, Q=75
-    - >40 帧: 500px/12列, Q=75
+    - ≤40 帧: 600px/10列, Q=75（验证通过）
+    - >40 帧: 400px/12列, Q=60（拆成3张，每张约20帧，单图约2000-4000 tokens）
     """
     n = len(tasks)
     if thumb_w <= 0:
-        if n <= 20:  thumb_w, cols, quality = 800, 8, 85
-        elif n <= 40: thumb_w, cols, quality = 600, 10, 75
-        else:         thumb_w, cols, quality = 500, 12, 75
+        if n <= 40: thumb_w, cols, quality = 600, 10, 75
+        else:       thumb_w, cols, quality = 400, 12, 60
     else:
         quality = 85
     try:
@@ -551,30 +549,38 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
         keep.append(tasks[-1])
         tasks = sorted(set(keep), key=lambda x: tasks.index(x))
 
-    # ---- 核心改动：帧拼接图代替多帧逐一发送 ----
-    # 生成单张帧缩略图拼接蒙太奇，大幅减小请求体大小
-    frame_strip_b64 = _build_frame_strip(tasks)
-    if frame_strip_b64:
-        frame_blocks: list[dict[str, Any]] = [{
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{frame_strip_b64}",
-                "detail": "high",
-            },
-        }]
-    else:
-        # 降级方案：逐帧发送（低帧数安全场景）
+    # ---- 生成帧拼接缩略图 ----
+    # ≤40 帧：单张拼接图（已验证正常）
+    # >40 帧：拆为 3 张拼接图同时发送（每张 ~20 帧，600px/10col/Q75，单图不超 token 限制）
+    n = len(tasks)
+    if n > 40:
+        chunk_size = max(1, n // 3)
+        chunks = [tasks[i:i+chunk_size] for i in range(0, n, chunk_size)]
         frame_blocks: list[dict[str, Any]] = []
-        for task in tasks:
-            image_b64, mime_type = _read_image_base64(task)
-            if image_b64:
+        for chunk in chunks:
+            b64 = _build_frame_strip(chunk, thumb_w=400, cols=8)
+            if b64:
                 frame_blocks.append({
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{image_b64}",
-                        "detail": "high",
-                    },
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"},
                 })
+        frame_strip_b64 = True  # 走拼接图 prompt 分支
+    else:
+        frame_strip_b64 = _build_frame_strip(tasks)
+        if frame_strip_b64:
+            frame_blocks: list[dict[str, Any]] = [{
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{frame_strip_b64}", "detail": "high"},
+            }]
+        else:
+            frame_blocks: list[dict[str, Any]] = []
+            for task in tasks:
+                image_b64, mime_type = _read_image_base64(task)
+                if image_b64:
+                    frame_blocks.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{image_b64}", "detail": "high"},
+                    })
 
     if not frame_blocks:
         return {
@@ -588,10 +594,17 @@ def analyze_video_with_vision(task_ids: list[str]) -> dict[str, Any]:
     prompt = build_video_vision_prompt(tasks)
     # 使用帧拼接缩略图时，在 prompt 开头说明
     if frame_strip_b64:
-        prompt = (
-            "⚠️ 注意：以下图片是全部标注帧的**缩略图拼接网格**（每列一帧，按时间从左到右、从上到下排列），"
-            "不是单张原图。请基于这张拼接图上每一格的视觉内容，结合下方的 YOLO 检测数据表进行综合分析。\n\n"
-        ) + prompt
+        if n > 40:
+            prompt = (
+                f"⚠️ 注意：以下 {len(frame_blocks)} 张图片是将全部 {n} 帧标注图**分组合并为缩略图拼接网格**"
+                "（每张图内每列一帧，按时间从左到右、从上到下排列，第1张对应视频前段、第2张对应中段、第3张对应后段）。"
+                "请综合所有拼接图上的视觉内容，结合下方的 YOLO 检测数据表进行全面的视频级分析。\n\n"
+            ) + prompt
+        else:
+            prompt = (
+                "⚠️ 注意：以下图片是全部标注帧的**缩略图拼接网格**（每列一帧，按时间从左到右、从上到下排列），"
+                "不是单张原图。请基于这张拼接图上每一格的视觉内容，结合下方的 YOLO 检测数据表进行综合分析。\n\n"
+            ) + prompt
     content_blocks: list[dict[str, Any]] = [
         {"type": "text", "text": prompt},
     ] + frame_blocks
