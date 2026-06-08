@@ -178,8 +178,8 @@ export default {
     }
   },
   template: `
-    <section class="edge-cloud-panel" style="display: flex; flex-direction: column; position: relative; overflow: hidden;">
-      <header class="chat-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+    <section class="edge-cloud-panel">
+      <header class="chat-header">
         <div class="chat-header-title-area">
           <button v-if="sidebarCollapsed" class="sidebar-toggle-btn expand-btn" type="button" title="展开侧边栏" @click="$emit('toggle-sidebar')">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
@@ -198,8 +198,7 @@ export default {
              :class="{ dragging: isDragging }"
              @dragover.prevent="isDragging = true"
              @dragleave.prevent="isDragging = false"
-             @drop.prevent="onFileDrop"
-             style="margin-bottom: 20px; padding: 24px; border: 2px dashed var(--line); border-radius: 12px; background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px); transition: all 0.3s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; cursor: pointer; position: relative;">
+             @drop.prevent="onFileDrop" class="upload-zone">
           
           <input type="file" 
                  ref="fileInput" 
@@ -209,23 +208,22 @@ export default {
                  
           <!-- Loading Mask -->
           <div v-if="uploading" 
-               class="upload-loading-overlay" 
-               style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 10px; z-index: 10;">
-            <div class="spinner-loader" style="width: 40px; height: 40px; border: 4px solid rgba(56, 189, 248, 0.1); border-top-color: #38bdf8; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 12px;"></div>
-            <div style="color: #38bdf8; font-weight: 600; font-size: 14px;">正在上传媒体文件并执行板端 YOLO 推理...</div>
-            <div style="color: var(--muted); font-size: 12px; margin-top: 4px;">视频文件需要抽帧，可能耗时稍长，请稍候...</div>
+               class="upload-loading-overlay" >
+            <div class="upload-big-spinner"></div>
+            <div class="upload-hint">正在上传媒体文件并执行板端 YOLO 推理...</div>
+            <div class="upload-hint-sub">视频文件需要抽帧，可能耗时稍长，请稍候...</div>
           </div>
           
-          <div @click="triggerFileInput" style="display: flex; flex-direction: column; align-items: center; width: 100%;">
+          <div @click="triggerFileInput" class="upload-prompt">
             <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 12px;">
               <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/>
               <path d="M12 12v9"/>
               <path d="m16 16-4-4-4 4"/>
             </svg>
-            <div style="font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px;">
+            <div class="upload-title">
               拖拽图片/视频到此处，或 <span style="color: #38bdf8; text-decoration: underline;">点击浏览</span>
             </div>
-            <div style="font-size: 12px; color: var(--muted);">
+            <div class="upload-subtext">
               支持 JPG, JPEG, PNG, WEBP, MP4, AVI, MKV, MOV 格式
             </div>
           </div>
@@ -252,7 +250,7 @@ export default {
               <div class="history-item-header" @click="toggleExpand(task.id)">
                 <div class="header-left">
                   <span class="status-dot" :class="task.status === 'completed' ? 'completed' : 'received'"></span>
-                  <span :style="task.media_type === 'video' ? 'background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;' : 'background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0;'" style="font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-family: sans-serif; margin-right: 6px; display: inline-block; vertical-align: middle;">
+                  <span :class="task.media_type === 'video' ? 'task-media-badge-video' : 'task-media-badge-image'">
                     {{ task.media_type === 'video' ? '🎥 视频' : '🖼️ 图片' }}
                   </span>
                   <strong class="task-title" style="vertical-align: middle;">{{ task.image_id || task.event?.image_id || 'world_cup.jpg' }}</strong>
@@ -281,7 +279,7 @@ export default {
                   <div class="content-left">
                     <!-- Video Mode Frames Slider -->
                     <div v-if="task.media_type === 'video' && task.event?.frames && task.event.frames.length" style="display:flex; flex-direction:column; gap:8px;">
-                      <div class="edge-task-image-container" style="height: 200px; position: relative; cursor: zoom-in;" @click="openZoom(task)">
+                      <div class="edge-task-image-container task-image-zoom-area" @click="openZoom(task)">
                         <img class="edge-task-image" 
                              :src="task.event.frames[activeFrameIdx || 0].annotated_image_url" 
                              alt="YOLO Annotated Result" 
@@ -312,7 +310,7 @@ export default {
                     
                     <!-- Image Mode -->
                     <div v-else style="display:flex; flex-direction:column; gap:8px;">
-                      <div class="edge-task-image-container" style="height: 200px; position: relative; cursor: zoom-in;" @click="openZoom(task)">
+                      <div class="edge-task-image-container task-image-zoom-area" @click="openZoom(task)">
                         <img v-if="task.event?.annotated_image_url" 
                              class="edge-task-image" 
                              :src="task.event.annotated_image_url" 
@@ -328,7 +326,7 @@ export default {
                       </div>
                     </div>
                     
-                    <div style="text-align: center; margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.4; word-break: break-all;">
+                    <div class="task-source-path">
                       分析源: <code>{{ task.event?.source_path || task.image_id || '/home/HwHiAiUser/samples/notebooks/01-yolov5/world_cup.jpg' }}</code>
                     </div>
                   </div>
@@ -402,7 +400,7 @@ export default {
                         </div>
                       </div>
                     </div>
-                    <div v-else-if="task.event?.edge_decision?.need_cloud_analysis && !task.analysis" class="agent-analysis-card-box" style="border-style:dashed; text-align:center; color:var(--muted); margin-top:8px;">
+                    <div v-else-if="task.event?.edge_decision?.need_cloud_analysis && !task.analysis" class="agent-analysis-card-box agent-waiting-box">
                       <div class="agent-box-body" style="padding: 10px 0;">
                         <p>🤖 等待云端 Agent 智能决策分析...</p>
                       </div>
@@ -477,7 +475,7 @@ export default {
         <!-- Logs Area -->
         <div class="terminal-body" ref="terminalBody">
           <pre class="terminal-log" v-text="terminalLogs"></pre>
-          <span v-if="terminalLoading" class="cursor-blink" style="color: #38bdf8; font-family: monospace; font-size: 12px; margin-left: 20px;">_</span>
+          <span v-if="terminalLoading" class="cursor-blink">_</span>
         </div>
       </div>
 
@@ -493,19 +491,19 @@ export default {
           <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 12px;">
             <div style="font-size: 13px; color: var(--text); line-height: 1.6;">
               本地媒体文件已成功上传至开发板！
-              <div style="background: var(--soft); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); font-family: monospace; font-size: 12px; word-break: break-all; margin-top: 8px;">
+              <div class="upload-confirm-path">
                 {{ uploadedFilePath }}
               </div>
             </div>
-            <div style="font-size: 13px; color: var(--text); font-weight: 600; margin-top: 8px;">
+            <div class="upload-confirm-prompt">
               是否立即对该文件运行板端 YOLO 推理与云端多模态分析？
             </div>
           </div>
           <footer class="modal-footer" style="padding: 12px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px;">
-            <button type="button" @click="cancelInference" style="padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); font-weight: 600; font-size: 12px; cursor: pointer;">
+            <button type="button" @click="cancelInference" class="upload-confirm-cancel">
               暂不执行
             </button>
-            <button type="button" @click="confirmInference" style="padding: 8px 20px; border-radius: 6px; border: none; background: var(--accent); color: white; font-weight: 700; font-size: 12px; cursor: pointer;">
+            <button type="button" @click="confirmInference" class="upload-confirm-ok">
               立即推理
             </button>
           </footer>
@@ -515,7 +513,7 @@ export default {
       <!-- Zoom Lightbox -->
       <div v-if="isZoomed" class="zoom-lightbox" @click="isZoomed = false" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.95); display: flex; align-items: center; justify-content: center; z-index: 3000; cursor: zoom-out;">
         <img :src="zoomedImageUrl" style="max-width: 95vw; max-height: 95vh; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
-        <button style="position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.25); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.2s;">&times;</button>
+        <button class="zoom-lightbox-close">&times;</button>
       </div>
     </section>
   `
