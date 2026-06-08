@@ -13,7 +13,7 @@ import time
 import paramiko
 
 from server.bootstrap import PROJECT_ROOT
-from server.camera_stream import register_camera_routes, update_latest_frame
+from server.camera_stream import register_camera_routes, set_yolo_status_callback, update_latest_frame
 from server.vision_analyzer import (
     analyze_with_vision,
     analyze_video_with_vision,
@@ -1880,6 +1880,10 @@ def _process_media_inference(ssh, file_path_on_board, server_url, is_video, forc
 # ---------------------------------------------------------------------------
 # Camera stream live-preview routes (laptop webcam → Atlas VideoCapture input)
 # ---------------------------------------------------------------------------
+
+# Wire camera YOLO start/stop into the global YOLO status tracking,
+# so frontend buttons and polling stay in sync.
+set_yolo_status_callback(set_yolo_status)
 
 register_camera_routes(edge_bp)
 

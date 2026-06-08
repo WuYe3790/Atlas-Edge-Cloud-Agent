@@ -157,6 +157,16 @@ def _sync_atlas_script(ssh: paramiko.SSHClient, board_home: str) -> str:
     return remote_path
 
 
+# Module-level callback for notifying edge_routes of YOLO status changes
+# (avoids circular import — set via register_camera_routes)
+_yolo_status_callback: object = None
+
+
+def set_yolo_status_callback(cb: object) -> None:
+    global _yolo_status_callback
+    _yolo_status_callback = cb
+
+
 def start_yolo_on_atlas(request_host: str) -> dict:
     """Start YOLO streaming on Atlas via SSH and return terminal output."""
     _start_camera()
@@ -201,7 +211,7 @@ def start_yolo_on_atlas(request_host: str) -> dict:
             f"--model yolo.om "
             f"--labels coco_names.txt "
             f"--server {server_url} "
-            f"--upload --force-cloud"
+            f"--upload --force-cloud --no-analyze"
         )
         daemon_cmd = (
             f"setsid bash -c '{run_cmd} >> {board_home}/yolo_camera.log 2>&1 &'"
@@ -353,6 +363,8 @@ def _camera_start_yolo_route():
     """POST /api/edge/camera/start-yolo — start camera + auto-launch YOLO on Atlas."""
     request_host = request.host or "127.0.0.1:5000"
     result = start_yolo_on_atlas(request_host)
+    if result.get("ok") and _yolo_status_callback is not None:
+        _yolo_status_callback("running_board")
     status_code = 200 if result.get("ok") else 500
     return jsonify(result), status_code
 
@@ -361,6 +373,8 @@ def _camera_stop_route():
     """POST /api/edge/camera/stop — stop camera AND kill YOLO on Atlas."""
     _stop_camera()
     yolo_msg = stop_yolo_on_atlas()
+    if _yolo_status_callback is not None:
+        _yolo_status_callback("idle")
     return jsonify({
         "ok": True,
         "camera_active": False,
