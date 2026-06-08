@@ -25,6 +25,9 @@ export default {
       isZoomed: false,
       zoomedImageUrl: '',
       // Live preview state
+      windowHost: location.hostname || '127.0.0.1',
+      laptopCameraActive: false,
+      cameraControlLoading: false,
       latestFrame: { frame_url: '', fps: 0, detections_count: 0, timestamp: '' },
       framePollTimer: null,
     };
@@ -47,6 +50,7 @@ export default {
     if (this.yoloInferenceStatus === 'running_board') {
       this.startFramePolling();
     }
+    this.checkCameraStatus();
   },
   beforeUnmount() {
     this.stopFramePolling();
@@ -224,6 +228,40 @@ export default {
         this.framePollTimer = null;
       }
     },
+    // Laptop camera controls
+    async checkCameraStatus() {
+      try {
+        const resp = await fetch('/api/edge/camera/status');
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.ok && data.camera_active) {
+            this.laptopCameraActive = true;
+            this.startFramePolling();
+          }
+        }
+      } catch { /* best-effort */ }
+    },
+    async toggleLaptopCamera() {
+      if (this.cameraControlLoading) return;
+      this.cameraControlLoading = true;
+      try {
+        const endpoint = this.laptopCameraActive
+          ? '/api/edge/camera/stop'
+          : '/api/edge/camera/start';
+        const resp = await fetch(endpoint, { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+          this.laptopCameraActive = data.camera_active;
+          if (this.laptopCameraActive) {
+            this.startFramePolling();
+          } else {
+            this.stopFramePolling();
+            this.latestFrame = { frame_url: '', fps: 0, detections_count: 0, timestamp: '' };
+          }
+        }
+      } catch { /* silently ignore — toggle is best-effort */ }
+      finally { this.cameraControlLoading = false; }
+    },
   },
   template: `
     <section class="edge-cloud-panel">
@@ -234,9 +272,19 @@ export default {
           </button>
           <h2>昇腾边云协同控制中心 (Ascend Edge-Cloud Monitor Console)</h2>
         </div>
-        <button class="upload-toggle-btn" @click="isUploadPanelOpen = !isUploadPanelOpen" style="margin-right: 20px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--panel-solid); color: var(--text); display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+        <button class="upload-toggle-btn" @click="isUploadPanelOpen = !isUploadPanelOpen" style="margin-right: 12px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: var(--panel-solid); color: var(--text); display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
           {{ isUploadPanelOpen ? '收起上传面板' : '上传本地文件' }}
+        </button>
+        <!-- Laptop Camera Toggle Button -->
+        <button class="camera-toggle-btn"
+                :class="{ active: laptopCameraActive }"
+                :disabled="cameraControlLoading"
+                @click="toggleLaptopCamera"
+                :title="laptopCameraActive ? '关闭笔电摄像头推流' : '开启笔电摄像头 MJPEG 推流供 Atlas 拉取'">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-5 3.75V7a2 2 0 0 0-2-2H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-3.75L23 17V7z"/><rect x="1" y="7" width="18" height="10" rx="2" ry="2"/></svg>
+          <span v-if="cameraControlLoading">...</span>
+          <span v-else>{{ laptopCameraActive ? '关闭摄像头' : '开启笔电摄像头' }}</span>
         </button>
       </header>
       
@@ -277,30 +325,30 @@ export default {
           </div>
         </div>
 
-        <!-- Live YOLO Inference Preview Card -->
-        <div v-if="latestFrame.frame_url" class="live-preview-card">
+        <!-- Live Camera + YOLO Preview Card -->
+        <div v-if="laptopCameraActive" class="live-preview-card">
           <div class="live-preview-header">
-            <span class="live-preview-dot"></span>
-            <span class="live-preview-label">实时 YOLO 推理预览</span>
+            <span class="live-preview-dot" :class="{ waiting: !latestFrame.frame_url }"></span>
+            <span class="live-preview-label">
+              {{ latestFrame.frame_url ? '实时 YOLO 推理预览' : '笔电摄像头推流中' }}
+            </span>
             <span class="live-preview-meta">
               <span v-if="latestFrame.fps" class="live-preview-fps">{{ latestFrame.fps }} FPS</span>
-              <span class="live-preview-count">{{ latestFrame.detections_count || 0 }} 目标</span>
+              <span v-if="latestFrame.detections_count" class="live-preview-count">{{ latestFrame.detections_count }} 目标</span>
             </span>
           </div>
           <div class="live-preview-viewport">
-            <img :src="latestFrame.frame_url"
+            <img v-if="latestFrame.frame_url"
+                 :src="latestFrame.frame_url"
                  class="live-preview-image"
                  alt="实时 YOLO 推理帧" />
-          </div>
-        </div>
-        <div v-else-if="yoloInferenceStatus === 'running_board'" class="live-preview-card live-preview-waiting">
-          <div class="live-preview-header">
-            <span class="live-preview-dot waiting"></span>
-            <span class="live-preview-label">等待边端推理帧...</span>
-          </div>
-          <div class="live-preview-viewport">
-            <div class="live-preview-placeholder">
-              <span>📡 边端正在运行 YOLO 推理，等待第一帧标注画面产生...</span>
+            <div v-else class="live-preview-placeholder">
+              <p style="margin:0 0 8px;">📡 摄像头已启动，推流地址：</p>
+              <code style="background:#1e293b;color:#38bdf8;padding:4px 10px;border-radius:4px;font-size:12px;">http://{{ windowHost }}:5000/camera/stream</code>
+              <p style="margin:12px 0 0;font-size:11px;color:#64748b;">
+                Atlas 端运行：<br/>
+                python3 atlas_yolo_detect_and_upload.py --camera http://{{ windowHost }}:5000/camera/stream --upload ...
+              </p>
             </div>
           </div>
         </div>

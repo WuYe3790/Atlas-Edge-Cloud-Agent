@@ -85,6 +85,16 @@ def _stop_camera() -> None:
         _camera_active = False
 
 
+# Public API called from routes / frontend
+start_laptop_camera = _start_camera
+stop_laptop_camera = _stop_camera
+
+
+def is_laptop_camera_active() -> bool:
+    with _camera_lock:
+        return _camera_active
+
+
 def _generate_mjpeg():
     """Flask streaming generator: multipart/x-mixed-replace JPEG frames."""
     _start_camera()
@@ -141,3 +151,40 @@ def register_camera_routes(edge_bp) -> None:
         "edge_latest_frame",
         _latest_frame_route,
     )
+    edge_bp.add_url_rule(
+        "/api/edge/camera/start",
+        "camera_start",
+        _camera_start_route,
+        methods=["POST"],
+    )
+    edge_bp.add_url_rule(
+        "/api/edge/camera/stop",
+        "camera_stop",
+        _camera_stop_route,
+        methods=["POST"],
+    )
+    edge_bp.add_url_rule(
+        "/api/edge/camera/status",
+        "camera_status",
+        _camera_status_route,
+    )
+
+
+def _camera_start_route():
+    """POST /api/edge/camera/start — start the laptop camera stream."""
+    try:
+        _start_camera()
+        return jsonify({"ok": True, "camera_active": True, "stream_url": "/camera/stream"})
+    except Exception as exc:
+        return jsonify({"ok": False, "camera_active": False, "error": str(exc)}), 500
+
+
+def _camera_stop_route():
+    """POST /api/edge/camera/stop — stop the laptop camera stream."""
+    _stop_camera()
+    return jsonify({"ok": True, "camera_active": False})
+
+
+def _camera_status_route():
+    """GET /api/edge/camera/status — check camera state."""
+    return jsonify({"ok": True, "camera_active": is_laptop_camera_active()})
