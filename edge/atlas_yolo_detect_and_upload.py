@@ -462,7 +462,12 @@ def main() -> int:
         print(f"[camera] Starting real-time YOLO loop. Interval: {args.interval_sec}s. Press Ctrl+C to stop.")
         try:
             while True:
-                ret, frame = cap.read()
+                # Flush the HTTP MJPEG buffer: grab all queued frames without
+                # decoding, so retrieve() returns the freshest frame from the
+                # camera instead of one buffered seconds ago.
+                for _ in range(30):
+                    cap.grab()
+                ret, frame = cap.retrieve()
                 if not ret:
                     print("[camera] Error: Could not read frame from camera. Retrying in 1s...", file=sys.stderr)
                     time.sleep(1.0)
