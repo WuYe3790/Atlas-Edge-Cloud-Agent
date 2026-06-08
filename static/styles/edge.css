@@ -1891,4 +1891,69 @@ input:checked + .switch-slider:before {
   backdrop-filter: blur(4px); transition: all 0.2s;
 }
 
+/* ====== TaskModal Component Classes ====== */
+
+/* Media badge (reuses EdgeMonitor class) */
+.task-media-badge-video,
+.task-media-badge-image { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: sans-serif; }
+
+/* Video frame grid */
+.video-frames-container { display: flex; flex-direction: column; gap: 8px; }
+
+/* Task modal image */
+.task-modal-annotated-img {
+  max-width: 100%; border-radius: 8px;
+  display: block; margin: 0 auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* System metrics visual row */
+.metric-visual-row {
+  display: flex; align-items: center; margin-bottom: 10px;
+}
+.metric-visual-label {
+  display: inline-block; width: 120px; font-size: 12px;
+}
+.metric-visual-progress-bg {
+  flex: 1; height: 8px; background: #e2e8f0;
+  border-radius: 4px; overflow: hidden; margin: 0 10px;
+}
+.metric-visual-value {
+  font-size: 12px; width: 140px; text-align: right;
+}
+
+/* Analysis content panels */
+.analysis-ds-panel {
+  line-height: 1.6; font-size: 13px; color: var(--text);
+  background: rgba(59,130,246,0.02); padding: 12px;
+  border-radius: 8px; border: 1px solid rgba(59,130,246,0.1);
+}
+.analysis-sn-panel {
+  line-height: 1.6; font-size: 13px; color: var(--text);
+  background: rgba(245,158,11,0.03); padding: 12px;
+  border-radius: 8px; border: 1px solid rgba(245,158,11,0.2);
+}
+.analysis-sn-header {
+  display: flex; align-items: center; gap: 8px;
+}
+.analysis-sn-badge {
+  font-weight: 400; font-size: 11px; color: var(--muted);
+  background: #fef3c7; padding: 2px 8px; border-radius: 999px;
+}
+.analysis-sn-meta {
+  margin-top: 8px; font-size: 11px;
+  color: var(--muted); display: flex; gap: 16px;
+}
+
+/* Trace timeline in TaskModal */
+.trace-timeline-modal {
+  display: flex; flex-direction: column; gap: 12px; margin-top: 10px;
+}
+.trace-node-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.trace-node-details { font-size: 12px; color: var(--muted); word-break: break-all; }
+.trace-node-result   { font-size: 12px; color: var(--text); margin-top: 4px; word-break: break-all; }
+
+/* Detection summary text */
+.detection-summary-text { font-size: 13px; margin-top: 8px; color: var(--muted); }
+
 

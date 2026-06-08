@@ -63,7 +63,7 @@ export default {
       <div class="modal-dialog" @click.stop="" style="max-height: 90vh; overflow-y: auto;">
         <header class="modal-header">
           <h3 id="modalTaskTitle" style="display: flex; align-items: center; gap: 8px;">
-            <span :style="taskDetail && taskDetail.media_type === 'video' ? 'background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe;' : 'background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0;'" style="font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: sans-serif;">
+            <span :class="taskDetail && taskDetail.media_type === 'video' ? 'task-media-badge-video' : 'task-media-badge-image'">
               {{ taskDetail && taskDetail.media_type === 'video' ? '🎥 视频' : '🖼️ 图片' }}
             </span>
             <span>任务详情: {{ taskDetail ? (taskDetail.image_id || taskDetail.event?.image_id || '未命名') : '' }}</span>
@@ -111,12 +111,12 @@ export default {
               </h4>
               
               <!-- Video Mode Frames Slider -->
-              <div v-if="taskDetail.media_type === 'video' && taskDetail.event?.frames && taskDetail.event.frames.length" style="display:flex; flex-direction:column; gap:8px;">
+              <div v-if="taskDetail.media_type === 'video' && taskDetail.event?.frames && taskDetail.event.frames.length" class="video-frames-container">
                 <div class="modal-image-container" style="position: relative; cursor: zoom-in;" @click="isZoomed = true">
                   <img class="modal-annotated-image" 
                        :src="taskDetail.event.frames[activeFrameIdx].annotated_image_url" 
                        alt="YOLO Annotated Result" 
-                       style="max-width:100%; border-radius:8px; display:block; margin:0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                       class="task-modal-annotated-img">
                   <div class="image-zoom-hint" style="position: absolute; right: 10px; bottom: 10px; background: rgba(0,0,0,0.65); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none;">
                     🔍 点击放大帧 {{ (activeFrameIdx) + 1 }}
                   </div>
@@ -143,7 +143,7 @@ export default {
               
               <!-- Image Mode -->
               <div v-else class="modal-image-container" style="position: relative; cursor: zoom-in;" @click="isZoomed = true">
-                <img class="modal-annotated-image" :src="taskDetail.event.annotated_image_url" alt="YOLO Annotated Result" style="max-width:100%; border-radius:8px; display:block; margin:0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+                <img class="modal-annotated-image" :src="taskDetail.event.annotated_image_url" alt="YOLO Annotated Result" class="task-modal-annotated-img">
                 <div class="image-zoom-hint" style="position: absolute; right: 10px; bottom: 10px; background: rgba(0,0,0,0.65); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none;">
                   🔍 点击放大
                 </div>
@@ -179,7 +179,7 @@ export default {
                 <div class="modal-metric"><div>人数</div><strong>{{ taskDetail.event?.summary?.person_count || 0 }}</strong></div>
                 <div class="modal-metric"><div>车辆数</div><strong>{{ taskDetail.event?.summary?.vehicle_count || 0 }}</strong></div>
               </div>
-              <div style="font-size:13px; margin-top:8px; color:var(--muted)">
+              <div class="detection-summary-text">
                 {{ parseClassCounts(taskDetail.event?.summary?.class_counts) || 'total:' + (taskDetail.event?.summary?.total_count || 0) }}
               </div>
             </section>
@@ -200,55 +200,55 @@ export default {
               
               <!-- CPU Load -->
               <div class="modal-metric-visual-row" style="margin-bottom: 10px;">
-                <span class="metric-visual-label" style="display:inline-block; width:120px; font-size:12px;">系统负载 (1m)</span>
-                <div class="metric-visual-progress-bg" style="flex:1; height:8px; background:#e2e8f0; border-radius:4px; overflow:hidden; margin: 0 10px;">
+                <span class="metric-visual-label">系统负载 (1m)</span>
+                <div class="metric-visual-progress-bg">
                   <div class="metric-visual-progress-fill cpu" :style="{ width: Math.min(100, Math.round((parseFloat(taskDetail.event.system_metrics.loadavg?.['1m'] || taskDetail.event.system_metrics.loadavg?.split?.(' ')[0] || 0)) * 33)) + '%', background:'#3b82f6', height:'100%' }"></div>
                 </div>
-                <span class="metric-visual-value" style="font-size:12px; width:140px; text-align:right;">负载: {{ taskDetail.event.system_metrics.loadavg?.['1m'] || taskDetail.event.system_metrics.loadavg?.split?.(' ')[0] || 0 }}</span>
+                <span class="metric-visual-value">负载: {{ taskDetail.event.system_metrics.loadavg?.['1m'] || taskDetail.event.system_metrics.loadavg?.split?.(' ')[0] || 0 }}</span>
               </div>
               
               <!-- Memory -->
               <div v-if="taskDetail.event.system_metrics.memory?.used_percent !== undefined" class="modal-metric-visual-row" style="margin-bottom: 10px;">
-                <span class="metric-visual-label" style="display:inline-block; width:120px; font-size:12px;">内存使用率</span>
-                <div class="metric-visual-progress-bg" style="flex:1; height:8px; background:#e2e8f0; border-radius:4px; overflow:hidden; margin: 0 10px;">
+                <span class="metric-visual-label">内存使用率</span>
+                <div class="metric-visual-progress-bg">
                   <div class="metric-visual-progress-fill memory" :style="{ width: taskDetail.event.system_metrics.memory.used_percent + '%', background:'#10b981', height:'100%' }"></div>
                 </div>
-                <span class="metric-visual-value" style="font-size:12px; width:140px; text-align:right;">{{ taskDetail.event.system_metrics.memory.used_percent }}% ({{ taskDetail.event.system_metrics.memory.available_mb }} MB 可用)</span>
+                <span class="metric-visual-value">{{ taskDetail.event.system_metrics.memory.used_percent }}% ({{ taskDetail.event.system_metrics.memory.available_mb }} MB 可用)</span>
               </div>
               
               <!-- NPU Core -->
               <div v-if="taskDetail.event.system_metrics.npu?.utilization_percent !== undefined" class="modal-metric-visual-row" style="margin-bottom: 10px;">
-                <span class="metric-visual-label" style="display:inline-block; width:120px; font-size:12px;">NPU 使用率</span>
-                <div class="metric-visual-progress-bg" style="flex:1; height:8px; background:#e2e8f0; border-radius:4px; overflow:hidden; margin: 0 10px;">
+                <span class="metric-visual-label">NPU 使用率</span>
+                <div class="metric-visual-progress-bg">
                   <div class="metric-visual-progress-fill npu" :style="{ width: taskDetail.event.system_metrics.npu.utilization_percent + '%', background:'#f59e0b', height:'100%' }"></div>
                 </div>
-                <span class="metric-visual-value" style="font-size:12px; width:140px; text-align:right;">{{ taskDetail.event.system_metrics.npu.utilization_percent }}% ({{ taskDetail.event.system_metrics.npu.temperature_c }}℃)</span>
+                <span class="metric-visual-value">{{ taskDetail.event.system_metrics.npu.utilization_percent }}% ({{ taskDetail.event.system_metrics.npu.temperature_c }}℃)</span>
               </div>
               
               <!-- NPU Hugepages -->
               <div v-if="taskDetail.event.system_metrics.npu?.memory_used_percent !== undefined" class="modal-metric-visual-row" style="margin-bottom: 10px;">
-                <span class="metric-visual-label" style="display:inline-block; width:120px; font-size:12px;">NPU 大页内存</span>
-                <div class="metric-visual-progress-bg" style="flex:1; height:8px; background:#e2e8f0; border-radius:4px; overflow:hidden; margin: 0 10px;">
+                <span class="metric-visual-label">NPU 大页内存</span>
+                <div class="metric-visual-progress-bg">
                   <div class="metric-visual-progress-fill npu" :style="{ width: (taskDetail.event.system_metrics.npu.memory_used_mb / taskDetail.event.system_metrics.npu.memory_total_mb * 100) + '%', background:'#f59e0b', height:'100%' }"></div>
                 </div>
-                <span class="metric-visual-value" style="font-size:12px; width:140px; text-align:right;">{{ taskDetail.event.system_metrics.npu.memory_used_mb }} / {{ taskDetail.event.system_metrics.npu.memory_total_mb }} 页 (100% 预留)</span>
+                <span class="metric-visual-value">{{ taskDetail.event.system_metrics.npu.memory_used_mb }} / {{ taskDetail.event.system_metrics.npu.memory_total_mb }} 页 (100% 预留)</span>
               </div>
             </section>
 
             <!-- 8. Cloud Agent Analysis (DeepSeek text supplement) -->
             <section v-if="taskDetail.analysis && taskDetail.analysis.answer" class="modal-section">
               <h4 class="modal-section-title">🤖 云端 Agent 综合研判</h4>
-              <div class="modal-analysis-content" v-html="renderMarkdown(taskDetail.analysis.answer)" style="line-height: 1.6; font-size: 13px; color: var(--text); background: rgba(59,130,246,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(59,130,246,0.1);"></div>
+              <div class="modal-analysis-content" v-html="renderMarkdown(taskDetail.analysis.answer)" class="analysis-ds-panel"></div>
             </section>
 
             <!-- 8b. SenseNova Multimodal Visual Analysis (separate panel) -->
             <section v-if="taskDetail.analysis && taskDetail.analysis.vision_analysis && taskDetail.analysis.vision_analysis.answer" class="modal-section">
-              <h4 class="modal-section-title" style="display:flex; align-items:center; gap:8px;">
+              <h4 class="modal-section-title" class="analysis-sn-header">
                 <span>🎬 商汤 SenseNova 多模态视觉分析</span>
-                <span style="font-weight:400; font-size:11px; color:var(--muted); background:#fef3c7; padding:2px 8px; border-radius:999px;">基于 YOLO 标注图</span>
+                <span class="analysis-sn-badge">基于 YOLO 标注图</span>
               </h4>
-              <div v-html="renderMarkdown(taskDetail.analysis.vision_analysis.answer)" style="line-height: 1.6; font-size: 13px; color: var(--text); background: rgba(245,158,11,0.03); padding: 12px; border-radius: 8px; border: 1px solid rgba(245,158,11,0.2);"></div>
-              <div style="margin-top:8px; font-size:11px; color:var(--muted); display:flex; gap:16px;">
+              <div v-html="renderMarkdown(taskDetail.analysis.vision_analysis.answer)" class="analysis-sn-panel"></div>
+              <div class="analysis-sn-meta">
                 <span>模型: {{ taskDetail.analysis.vision_analysis.model || 'sensenova-6.7-flash-lite' }}</span>
                 <span>Token 用量: {{ taskDetail.analysis.vision_analysis.usage?.total_tokens || taskDetail.analysis.vision_analysis.trace?.[0]?.usage?.total_tokens || 'N/A' }}</span>
                 <span>输入: {{ taskDetail.analysis.frame_count || taskDetail.analysis.vision_analysis.frame_count || 1 }} 帧 YOLO 标注图</span>
@@ -259,7 +259,7 @@ export default {
             <!-- 9. Agent Execution Trace -->
             <section v-if="taskDetail.analysis && taskDetail.analysis.trace && taskDetail.analysis.trace.length" class="modal-section">
               <h4 class="modal-section-title">&#x1f9e0; 智能体执行追踪 (Agent Trace)</h4>
-              <div class="trace-timeline" style="display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
+              <div class="trace-timeline trace-timeline-modal">
                 <div v-for="(item, idx) in taskDetail.analysis.trace" :key="idx"
                      class="trace-node"
                      :style="{
@@ -276,7 +276,7 @@ export default {
                     {{ item.type === 'vision_analysis' ? '🎥' : (item.type === 'tool_call' ? '🔧' : '🤖') }}
                   </div>
                   <div class="trace-node-body" style="flex: 1;">
-                    <div class="trace-node-header" style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                    <div class="trace-node-header">
                       <span class="trace-node-name" style="font-weight: 600;">
                         {{ item.type === 'vision_analysis' ? '🎬 多模态视觉分析 (SenseNova ' + (item.media_type === 'video' ? '视频' : '图片') + ' ' + (item.frame_count || '') + '帧): ' + (item.model || 'sensenova-6.7-flash-lite') : (item.type === 'tool_call' ? '调用工具: ' + item.tool : '模型响应: ' + (item.model || 'unknown')) }}
                       </span>
@@ -284,12 +284,11 @@ export default {
                         {{ item.type === 'vision_analysis' ? (item.usage && item.usage.total_tokens ? 'Token: ' + item.usage.total_tokens : '') : (item.type === 'tool_call' ? (item.duration_ms ? item.duration_ms + 'ms' : '') : (item.usage && item.usage.total_tokens ? 'Token 消耗: ' + item.usage.total_tokens : '')) }}
                       </span>
                     </div>
-                    <div class="trace-node-details" style="font-size: 12px; color: var(--muted); word-break: break-all;">
+                    <div class="trace-node-details">
                       {{ item.type === 'vision_analysis' ? '模型: ' + (item.model || 'sensenova-6.7-flash-lite') + ' | 状态: ' + (item.status || 'success') + ' | 输入: ' + (item.media_type === 'video' ? (item.frame_count || '?') + ' 帧标注图' : '单张标注图') : (item.type === 'tool_call' ? '参数: ' + JSON.stringify(item.args) : '状态: ' + (item.status || 'Success')) }}
                     </div>
                     <div v-if="item.type === 'tool_call' && item.result"
-                         class="trace-node-details"
-                         style="font-size: 12px; color: var(--text); margin-top: 4px; word-break: break-all;">
+                         class="trace-node-details trace-node-result">
                       <strong>返回:</strong> {{ item.result.length > 500 ? item.result.substring(0, 500) + '...' : item.result }}
                     </div>
                   </div>
@@ -316,7 +315,7 @@ export default {
         <div v-if="hasMultipleFrames" style="position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.6); font-size: 13px;">
           帧 {{ activeFrameIdx + 1 }} / {{ zoomFrameCount }}
         </div>
-        <button @click.stop="isZoomed = false" style="position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.25); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); transition: all 0.2s;">&times;</button>
+        <button @click.stop="isZoomed = false" class="zoom-lightbox-close">&times;</button>
       </div>
     </teleport>
   `
