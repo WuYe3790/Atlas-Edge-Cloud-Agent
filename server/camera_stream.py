@@ -2,6 +2,12 @@
 Laptop camera capture + MJPEG streaming + latest-frame cache
 + one-click Atlas YOLO auto-launch via SSH
 + SSE push for low-latency frame updates to browser.
+
+Thread model:
+  Capture thread (daemon) ──┐
+                             ├── _frame_queue (maxsize=1) ──→ MJPEG generator
+  _camera_lock protects     │                                  (Flask request thread)
+  _camera_cap + _camera_active
 """
 from __future__ import annotations
 
@@ -33,6 +39,10 @@ _FRAME_WIDTH = 640
 _FRAME_HEIGHT = 480
 _JPEG_QUALITY = 80
 
+# Queue that the capture thread feeds with JPEG bytes for the MJPEG generator.
+# maxsize=1 so we always deliver the freshest frame to MJPEG consumers.
+_frame_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=1)
+
 
 # ---------------------------------------------------------------------------
 # SSE subscriber queue — push frame updates to all connected browsers
@@ -56,7 +66,7 @@ def _sse_broadcast(data: str) -> None:
 
 
 def _sse_subscribe() -> queue.Queue[str | None]:
-    """Register a new SSE subscriber. Returns a queue the subscriber reads from."""
+    """Register a new SSE subscriber."""
     q: queue.Queue[str | None] = queue.Queue(maxsize=32)
     with _sse_lock:
         _sse_queues.append(q)
@@ -73,10 +83,11 @@ def _sse_unsubscribe(q: queue.Queue[str | None]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Latest annotated-frame cache (updated by edge event handler)
+# Latest annotated-frame cache (in-memory, zero disk I/O for preview)
 # ---------------------------------------------------------------------------
 
 _frame_lock = threading.Lock()
+_latest_frame_bytes: bytes | None = None
 _latest_frame_cache: dict = {
     "frame_url": "",
     "timestamp": "",
@@ -89,17 +100,36 @@ def update_latest_frame(
     frame_url: str = "",
     fps: float = 0,
     detections_count: int = 0,
+    frame_bytes: bytes | None = None,
 ) -> None:
-    """Record the most recent YOLO-annotated frame and push to SSE subscribers."""
+    """Record the most recent YOLO-annotated frame and push to SSE subscribers.
+
+    When frame_bytes is provided the SSE payload carries a direct in-memory
+    image URL (/api/edge/latest-frame/image), avoiding an extra disk read +
+    HTTP round-trip by the browser.
+    """
+    global _latest_frame_bytes
+    ts = datetime.now(timezone.utc).isoformat()
+    if frame_bytes is not None:
+        with _frame_lock:
+            _latest_frame_bytes = frame_bytes
+
+    image_url = f"/api/edge/latest-frame/image?_t={int(time.monotonic_ns())}" if frame_bytes else frame_url
+
+    with _frame_lock:
+        _latest_frame_cache.update({
+            "frame_url": image_url,
+            "fps": float(fps or 0),
+            "detections_count": int(detections_count or 0),
+            "timestamp": ts,
+        })
+
     payload = {
-        "frame_url": frame_url,
+        "frame_url": image_url,
         "fps": float(fps or 0),
         "detections_count": int(detections_count or 0),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": ts,
     }
-    with _frame_lock:
-        _latest_frame_cache.update(payload)
-    # Push to all connected browsers via SSE
     _sse_broadcast(json.dumps(payload, ensure_ascii=False))
 
 
@@ -109,9 +139,46 @@ def get_latest_frame() -> dict:
         return dict(_latest_frame_cache)
 
 
+def get_latest_frame_bytes() -> bytes | None:
+    """Return cached JPEG bytes (or None). Called by the image route."""
+    with _frame_lock:
+        return _latest_frame_bytes
+
+
 # ---------------------------------------------------------------------------
-# Camera lifecycle
+# Camera lifecycle — capture thread + start / stop
 # ---------------------------------------------------------------------------
+
+def _capture_thread_func() -> None:
+    """Daemon: continuously read camera frames and push JPEG bytes to _frame_queue."""
+    while True:
+        with _camera_lock:
+            if not _camera_active or _camera_cap is None:
+                # Signal the MJPEG generator to stop
+                try:
+                    _frame_queue.put_nowait(None)
+                except queue.Full:
+                    pass
+                break
+            ok, frame = _camera_cap.read()
+        if not ok:
+            time.sleep(0.01)
+            continue
+        _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY])
+        raw = jpeg.tobytes()
+        # Drop old frame if queue is full — MJPEG consumer always gets the latest
+        try:
+            _frame_queue.put_nowait(raw)
+        except queue.Full:
+            try:
+                _frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                _frame_queue.put_nowait(raw)
+            except queue.Full:
+                pass
+
 
 def _start_camera() -> None:
     global _camera_cap, _camera_active
@@ -126,18 +193,36 @@ def _start_camera() -> None:
             raise RuntimeError("无法打开笔记本摄像头 (cv2.VideoCapture(0))")
         _camera_cap = cap
         _camera_active = True
+        # Drain stale queue items from a previous session
+        while not _frame_queue.empty():
+            try:
+                _frame_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    # Launch capture daemon thread — independent of Flask request threads
+    t = threading.Thread(target=_capture_thread_func, daemon=True, name="camera-capture")
+    t.start()
 
 
 def _stop_camera() -> None:
     global _camera_cap, _camera_active
     with _camera_lock:
+        _camera_active = False
+    # Brief pause so the capture thread notices _camera_active=False and exits
+    time.sleep(0.15)
+    # Unblock MJPEG generator if it's blocked on _frame_queue.get()
+    try:
+        _frame_queue.put_nowait(None)
+    except queue.Full:
+        pass
+    with _camera_lock:
         if _camera_cap is not None:
             _camera_cap.release()
             _camera_cap = None
-        _camera_active = False
 
 
-# Public API called from routes / frontend
+# Public API
 start_laptop_camera = _start_camera
 stop_laptop_camera = _stop_camera
 
@@ -168,7 +253,6 @@ def _atlas_ssh_client() -> paramiko.SSHClient:
 
 
 def _resolve_server_url(request_host: str) -> str:
-    """Discover the laptop IP that Atlas can reach."""
     host = request_host.split(":")[0]
     if host in ("127.0.0.1", "localhost"):
         try:
@@ -186,10 +270,6 @@ def _resolve_server_url(request_host: str) -> str:
 
 
 def _sync_atlas_script(ssh: paramiko.SSHClient, board_home: str) -> str:
-    """Sync atlas_yolo_detect_and_upload.py to the board via SFTP.
-
-    Returns the target script path on the board.
-    """
     local_path = str(PROJECT_ROOT / "edge" / "atlas_yolo_detect_and_upload.py")
     remote_path = f"{board_home}/atlas_yolo_detect_and_upload.py"
     try:
@@ -202,7 +282,6 @@ def _sync_atlas_script(ssh: paramiko.SSHClient, board_home: str) -> str:
 
 
 # Module-level callback for notifying edge_routes of YOLO status changes
-# (avoids circular import — set via register_camera_routes)
 _yolo_status_callback: object = None
 
 
@@ -234,16 +313,12 @@ def start_yolo_on_atlas(request_host: str) -> dict:
         }
 
     try:
-        # 1. Kill any existing YOLO process
         ssh.exec_command(
             "pkill -f 'atlas_yolo_detect_and_upload.py' || true"
         )
         time.sleep(0.5)
 
-        # 2. Sync the latest script
         script_path = _sync_atlas_script(ssh, board_home)
-
-        # 3. Build and execute the YOLO command
         yolo_dir = f"{board_home}/samples/notebooks/01-yolov5"
         python_bin = "/usr/local/miniconda3/bin/python3"
 
@@ -268,7 +343,6 @@ def start_yolo_on_atlas(request_host: str) -> dict:
         stderr_lines.append(_serr.read().decode("utf-8", errors="ignore"))
         time.sleep(2.5)
 
-        # 4. Verify YOLO is running
         _sin, pgrep_out, _serr = ssh.exec_command(
             "pgrep -f 'atlas_yolo_detect_and_upload.py' || true"
         )
@@ -276,7 +350,6 @@ def start_yolo_on_atlas(request_host: str) -> dict:
         pgrep_out.close()
 
         if not pids:
-            # Try to read tail of log for diagnostics
             _sin, log_out, _serr = ssh.exec_command(
                 f"tail -30 {board_home}/yolo_camera.log 2>/dev/null || echo '(日志不存在)'"
             )
@@ -290,7 +363,6 @@ def start_yolo_on_atlas(request_host: str) -> dict:
                 "stdout": f"命令:\n{run_cmd}\n\n日志末尾:\n{log_tail}",
             }
 
-        # 5. Read initial log output
         _sin, log_out, _serr = ssh.exec_command(
             f"tail -20 {board_home}/yolo_camera.log 2>/dev/null || echo '(日志不可读)'"
         )
@@ -326,7 +398,6 @@ def start_yolo_on_atlas(request_host: str) -> dict:
 
 
 def stop_yolo_on_atlas() -> str:
-    """SSH to Atlas and kill the YOLO process. Returns a status string."""
     try:
         ssh = _atlas_ssh_client()
     except Exception as exc:
@@ -337,7 +408,6 @@ def stop_yolo_on_atlas() -> str:
             "pkill -f 'atlas_yolo_detect_and_upload.py' || true"
         )
         _sout.read()
-        # Also clear the camera-related YOLO status
         time.sleep(0.3)
         return "已通过 SSH 终止 Atlas 上的 YOLO 推理进程。"
     except Exception as exc:
@@ -347,25 +417,25 @@ def stop_yolo_on_atlas() -> str:
 
 
 # ---------------------------------------------------------------------------
-# MJPEG stream generator
+# MJPEG stream generator — consumes from capture thread via queue
 # ---------------------------------------------------------------------------
 
 def _generate_mjpeg():
-    """Flask streaming generator: multipart/x-mixed-replace JPEG frames."""
+    """Flask streaming generator for multipart/x-mixed-replace JPEG.
+
+    Consumes frame bytes from the capture thread via _frame_queue
+    instead of blocking Flask's worker thread on cv2 reads.
+    """
     _start_camera()
     try:
         while True:
-            with _camera_lock:
-                if not _camera_active or _camera_cap is None:
-                    break
-                ok, frame = _camera_cap.read()
-            if not ok:
-                continue
-            _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY])
+            raw = _frame_queue.get()
+            if raw is None:
+                break
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n"
-                + jpeg.tobytes()
+                + raw
                 + b"\r\n"
             )
     except GeneratorExit:
@@ -375,7 +445,7 @@ def _generate_mjpeg():
 
 
 # ---------------------------------------------------------------------------
-# Flask routes (registered on edge_bp in register_camera_routes)
+# Flask routes — registered via register_camera_routes
 # ---------------------------------------------------------------------------
 
 def _mjpeg_stream_route():
@@ -387,11 +457,36 @@ def _mjpeg_stream_route():
 
 
 def _latest_frame_route():
-    """GET /api/edge/latest-frame — latest YOLO-annotated frame preview."""
+    """GET /api/edge/latest-frame — latest YOLO-annotated frame metadata (JSON)."""
     info = get_latest_frame()
     if not info.get("frame_url"):
         return jsonify({"ok": False, "message": "暂无实时帧数据"}), 404
     return jsonify({"ok": True, **info})
+
+
+def _latest_frame_image_route():
+    """GET /api/edge/latest-frame/image — cached annotated JPEG from memory.
+
+    Zero disk I/O — returns bytes directly from the in-memory cache.
+    Cache-busting query param _t is ignored (the cache always holds
+    the single most recent frame).
+    """
+    img_bytes = get_latest_frame_bytes()
+    if img_bytes is None:
+        # Fallback to file if no in-memory cache (e.g. after restart)
+        info = get_latest_frame()
+        file_url = info.get("frame_url", "")
+        if file_url and file_url.startswith("/api/edge/artifacts/"):
+            from flask import send_from_directory
+            artifact_dir = PROJECT_ROOT / "data" / "edge_artifacts"
+            filename = file_url.split("/")[-1].split("?")[0]
+            return send_from_directory(artifact_dir, filename, mimetype="image/jpeg")
+        return Response("无缓存帧数据", status=404)
+    return Response(
+        img_bytes,
+        mimetype="image/jpeg",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 def _camera_start_route():
@@ -419,6 +514,10 @@ def _camera_stop_route():
     yolo_msg = stop_yolo_on_atlas()
     if _yolo_status_callback is not None:
         _yolo_status_callback("idle")
+    # Clear cached frame bytes so the preview card shows "stopped"
+    with _frame_lock:
+        global _latest_frame_bytes
+        _latest_frame_bytes = None
     return jsonify({
         "ok": True,
         "camera_active": False,
@@ -432,13 +531,8 @@ def _camera_status_route():
 
 
 def _camera_sse_route():
-    """GET /api/edge/latest-frame/stream — SSE push of latest YOLO frame.
-
-    Browser EventSource receives 'data: {json}' events in real time,
-    eliminating the 1-second polling delay.
-    """
+    """GET /api/edge/latest-frame/stream — SSE push of latest YOLO frame."""
     q = _sse_subscribe()
-    # Send current frame immediately on connect
     info = get_latest_frame()
 
     def generate():
@@ -468,41 +562,11 @@ def _camera_sse_route():
 
 def register_camera_routes(edge_bp) -> None:
     """Add camera-related routes to the edge blueprint."""
-    edge_bp.add_url_rule(
-        "/camera/stream",
-        "camera_stream",
-        _mjpeg_stream_route,
-    )
-    edge_bp.add_url_rule(
-        "/api/edge/latest-frame",
-        "edge_latest_frame",
-        _latest_frame_route,
-    )
-    edge_bp.add_url_rule(
-        "/api/edge/camera/status",
-        "camera_status",
-        _camera_status_route,
-    )
-    edge_bp.add_url_rule(
-        "/api/edge/camera/start",
-        "camera_start",
-        _camera_start_route,
-        methods=["POST"],
-    )
-    edge_bp.add_url_rule(
-        "/api/edge/camera/start-yolo",
-        "camera_start_yolo",
-        _camera_start_yolo_route,
-        methods=["POST"],
-    )
-    edge_bp.add_url_rule(
-        "/api/edge/camera/stop",
-        "camera_stop",
-        _camera_stop_route,
-        methods=["POST"],
-    )
-    edge_bp.add_url_rule(
-        "/api/edge/latest-frame/stream",
-        "frame_sse",
-        _camera_sse_route,
-    )
+    edge_bp.add_url_rule("/camera/stream", "camera_stream", _mjpeg_stream_route)
+    edge_bp.add_url_rule("/api/edge/latest-frame", "edge_latest_frame", _latest_frame_route)
+    edge_bp.add_url_rule("/api/edge/latest-frame/image", "latest_frame_image", _latest_frame_image_route)
+    edge_bp.add_url_rule("/api/edge/camera/status", "camera_status", _camera_status_route)
+    edge_bp.add_url_rule("/api/edge/camera/start", "camera_start", _camera_start_route, methods=["POST"])
+    edge_bp.add_url_rule("/api/edge/camera/start-yolo", "camera_start_yolo", _camera_start_yolo_route, methods=["POST"])
+    edge_bp.add_url_rule("/api/edge/camera/stop", "camera_stop", _camera_stop_route, methods=["POST"])
+    edge_bp.add_url_rule("/api/edge/latest-frame/stream", "frame_sse", _camera_sse_route)

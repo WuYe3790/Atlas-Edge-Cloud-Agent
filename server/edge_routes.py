@@ -98,8 +98,17 @@ def receive_edge_event():
             if "frames" not in parent_event:
                 parent_event["frames"] = []
             
-            event = _save_embedded_artifacts(parent_task_id, event)
-            
+            event, img_bytes = _save_embedded_artifacts(parent_task_id, event)
+            if img_bytes:
+                inference = event.get("inference") if isinstance(event.get("inference"), dict) else {}
+                detections = event.get("detections") if isinstance(event.get("detections"), list) else []
+                update_latest_frame(
+                    frame_url=event.get("annotated_image_url", ""),
+                    fps=inference.get("fps", 0),
+                    detections_count=len(detections),
+                    frame_bytes=img_bytes,
+                )
+
             frame_idx = len(parent_event["frames"])
             frame_item = {
                 "frame_index": frame_idx,
@@ -132,7 +141,7 @@ def receive_edge_event():
             )
 
     task = create_edge_task(event, status="received")
-    event = _save_embedded_artifacts(task["id"], event)
+    event, img_bytes = _save_embedded_artifacts(task["id"], event)
     task = update_edge_task_event(task["id"], event) or task
 
     # Update live-preview cache when an annotated frame arrives
@@ -144,6 +153,7 @@ def receive_edge_event():
             frame_url=annotated_url,
             fps=inference.get("fps", 0),
             detections_count=len(detections),
+            frame_bytes=img_bytes,
         )
 
     need_cloud_analysis = bool(event.get("edge_decision", {}).get("need_cloud_analysis", True))
@@ -821,26 +831,26 @@ def _normalize_edge_event(event: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _save_embedded_artifacts(task_id: str, event: dict[str, Any]) -> dict[str, Any]:
+def _save_embedded_artifacts(task_id: str, event: dict[str, Any]) -> tuple[dict[str, Any], bytes | None]:
     image_payload = event.pop("annotated_image", None)
     if not isinstance(image_payload, dict):
-        return event
+        return event, None
     raw_base64 = image_payload.get("base64")
     if not isinstance(raw_base64, str) or not raw_base64:
-        return event
+        return event, None
     try:
         image_bytes = base64.b64decode(raw_base64, validate=True)
     except Exception:
-        return event
+        return event, None
     if not image_bytes:
-        return event
+        return event, None
     EDGE_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     filename = _safe_artifact_name(task_id, image_payload.get("filename") or "annotated.jpg")
     path = EDGE_ARTIFACT_DIR / filename
     path.write_bytes(image_bytes)
     event["annotated_image_url"] = f"/api/edge/artifacts/{filename}"
     event["annotated_image_filename"] = filename
-    return event
+    return event, image_bytes
 
 
 def _safe_artifact_name(task_id: str, filename: Any) -> str:
