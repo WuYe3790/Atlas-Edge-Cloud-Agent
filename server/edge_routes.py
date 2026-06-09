@@ -13,7 +13,7 @@ import time
 import paramiko
 
 from server.bootstrap import PROJECT_ROOT
-from server.camera_stream import register_camera_routes, set_yolo_status_callback, update_latest_frame
+from server.camera_stream import register_camera_routes, set_yolo_status_callback, stop_laptop_camera, update_latest_frame
 from server.vision_analyzer import (
     analyze_with_vision,
     analyze_video_with_vision,
@@ -1277,9 +1277,11 @@ def edge_control():
                 "pkill -f 'atlas_yolo_detect_and_upload.py' || true; pkill -f 'extract_frames.py' || true"
             )
             _sout.read()
+            # Also stop the laptop camera so the preview card resets
+            stop_laptop_camera()
             return jsonify({
                 "ok": True,
-                "message": "已成功终止开发板上的 YOLO 推理与抽帧任务流程。"
+                "message": "已成功终止开发板上的 YOLO 推理与抽帧任务流程，笔电摄像头已停止。"
             })
 
         elif action == "trigger_heartbeat":

@@ -330,7 +330,8 @@ def start_yolo_on_atlas(request_host: str) -> dict:
             f"--model yolo.om "
             f"--labels coco_names.txt "
             f"--server {server_url} "
-            f"--upload --force-cloud --no-analyze"
+            f"--upload --force-cloud --no-analyze "
+            f"--interval-sec 0.1"
         )
         daemon_cmd = (
             f"setsid bash -c '{run_cmd} >> {board_home}/yolo_camera.log 2>&1 &'"
@@ -423,10 +424,11 @@ def stop_yolo_on_atlas() -> str:
 def _generate_mjpeg():
     """Flask streaming generator for multipart/x-mixed-replace JPEG.
 
-    Consumes frame bytes from the capture thread via _frame_queue
-    instead of blocking Flask's worker thread on cv2 reads.
+    Consumes frame bytes from the capture thread via _frame_queue.
+    Does NOT start or stop the camera — the camera lifecycle is managed
+    by the start/stop camera APIs.  This generator is a passive consumer
+    so that a MJPEG client disconnecting does not kill the capture thread.
     """
-    _start_camera()
     try:
         while True:
             raw = _frame_queue.get()
@@ -440,8 +442,6 @@ def _generate_mjpeg():
             )
     except GeneratorExit:
         pass
-    finally:
-        _stop_camera()
 
 
 # ---------------------------------------------------------------------------

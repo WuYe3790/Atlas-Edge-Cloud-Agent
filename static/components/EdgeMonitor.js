@@ -39,13 +39,16 @@ export default {
       this.isZoomed = false;
       this.zoomedImageUrl = '';
     },
-    // Auto-expand preview card when YOLO starts, collapse when stopped
+    // Auto-expand preview card when YOLO starts, reset all state when stopped
     yoloInferenceStatus(newVal, oldVal) {
       if (newVal === 'running_board') {
         this.livePreviewExpanded = true;
         this.startFrameSSE();
       } else if (oldVal === 'running_board' && newVal !== 'running_board') {
+        // YOLO stopped — reset camera state, close SSE, clear frames
         this.stopFrameSSE();
+        this.laptopCameraActive = false;
+        this.latestFrame = { frame_url: '', fps: 0, detections_count: 0, timestamp: '' };
       }
     },
   },
