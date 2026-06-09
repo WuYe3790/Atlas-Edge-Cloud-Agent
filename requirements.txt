@@ -12,3 +12,5 @@ faiss-cpu>=1.13.2
 numpy>=1.25,<2.0
 ddgs>=9.0.0
 paramiko>=3.0.0
+opencv-python-headless>=4.8.0
+Pillow>=10.0.0
