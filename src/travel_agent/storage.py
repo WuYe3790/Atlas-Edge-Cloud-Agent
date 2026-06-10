@@ -375,3 +375,22 @@ def list_edge_devices() -> list[dict[str, Any]]:
         item["status"] = json.loads(item.pop("status_json") or "{}")
         devices.append(item)
     return devices
+
+
+def delete_edge_task(task_id: str) -> bool:
+    """Delete an edge task and its artifact file. Returns True if deleted."""
+    task = get_edge_task(task_id)
+    if task:
+        event = task.get("event") or {}
+        url = event.get("annotated_image_url", "")
+        if url and "/artifacts/" in url:
+            filename = url.split("/")[-1].split("?")[0]
+            artifact = PROJECT_ROOT / "data" / "edge_artifacts" / filename
+            try:
+                if artifact.exists():
+                    artifact.unlink()
+            except Exception:
+                pass
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM edge_tasks WHERE id = ?", (task_id,))
+    return cursor.rowcount > 0

@@ -23,6 +23,7 @@ from travel_agent.agent import run_agent_with_trace
 from travel_agent.config import load_llm_config
 from travel_agent.storage import (
     create_edge_task,
+    delete_edge_task,
     get_edge_task,
     list_edge_devices,
     list_edge_tasks,
@@ -140,6 +141,29 @@ def receive_edge_event():
                 }
             )
 
+    # Camera stream frames: update live-preview only, do NOT persist
+    is_camera_stream = str(event.get("source_type", "")).lower() == "camera_stream"
+
+    if is_camera_stream:
+        event, img_bytes = _save_embedded_artifacts("live-cam", event)
+        # Still push to live preview
+        annotated_url = event.get("annotated_image_url")
+        if annotated_url:
+            inference = event.get("inference") if isinstance(event.get("inference"), dict) else {}
+            detections = event.get("detections") if isinstance(event.get("detections"), list) else []
+            update_latest_frame(
+                frame_url=annotated_url,
+                fps=inference.get("fps", 0),
+                detections_count=len(detections),
+                frame_bytes=img_bytes,
+            )
+        return jsonify({
+            "ok": True,
+            "task_id": "live-cam",
+            "cloud_analysis_required": False,
+            "message": "Camera frame received (preview only).",
+        })
+
     task = create_edge_task(event, status="received")
     event, img_bytes = _save_embedded_artifacts(task["id"], event)
     task = update_edge_task_event(task["id"], event) or task
@@ -243,8 +267,14 @@ def edge_status():
     return jsonify({"ok": True, "devices": list(devices.values()), "task_count": len(tasks)})
 
 
-@edge_bp.get("/api/edge/tasks/<task_id>")
+@edge_bp.route("/api/edge/tasks/<task_id>", methods=["GET", "DELETE"])
 def edge_task_detail(task_id: str):
+    if request.method == "DELETE":
+        ok = delete_edge_task(task_id)
+        if not ok:
+            return jsonify({"ok": False, "error": "任务不存在或已删除"}), 404
+        return jsonify({"ok": True, "task_id": task_id, "message": "任务已删除"})
+
     task = get_edge_task(task_id)
     if not task:
         return jsonify({"ok": False, "error": "Task not found"}), 404

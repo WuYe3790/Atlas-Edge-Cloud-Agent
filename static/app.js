@@ -1,8 +1,8 @@
 import { createApp, ref, reactive, onMounted, watch, nextTick } from 'vue';
-import SidebarComponent from './components/SidebarComponent.js?v=20260608-step6';
-import TravelAssistant from './components/TravelAssistant.js?v=20260608-step6';
-import EdgeMonitor from './components/EdgeMonitor.js?v=20260608-step6';
-import TaskModal from './components/TaskModal.js?v=20260608-step6';
+import SidebarComponent from './components/SidebarComponent.js?v=20260610-r3';
+import TravelAssistant from './components/TravelAssistant.js?v=20260610-r3';
+import EdgeMonitor from './components/EdgeMonitor.js?v=20260610-r3';
+import TaskModal from './components/TaskModal.js?v=20260610-r3';
 
 createApp({
   components: {
@@ -768,6 +768,14 @@ createApp({
       }
     };
 
+    const deleteEdgeTask = async (taskId) => {
+      try {
+        const resp = await fetch(`/api/edge/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.ok) tasks.value = tasks.value.filter(t => t.id !== taskId);
+      } catch (err) { console.error('Delete task error:', err); }
+    };
+
     const runUploadedYolo = async (filePath) => {
       terminalLogs.value += `\n[${new Date().toLocaleTimeString()}] [执行操作] 开始对上传文件执行 YOLO 推理: ${filePath}...\n`;
       terminalLoading.value = true;
@@ -1007,7 +1015,8 @@ createApp({
       executeBoardControl,
       retrySSHConnection,
       submitBoardYolo,
-      runUploadedYolo
+      runUploadedYolo,
+      deleteEdgeTask,
     };
   }
 }).mount('#appShell');

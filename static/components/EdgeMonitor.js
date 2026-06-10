@@ -12,7 +12,7 @@ export default {
     sshStatusText: { type: String, default: '未连接' },
     yoloInferenceStatus: { type: String, default: 'idle' }
   },
-  emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh', 'upload-success', 'log', 'run-uploaded-yolo', 'camera-yolo-started', 'camera-yolo-stopped'],
+  emits: ['open-task', 'run-analysis', 'toggle-sidebar', 'toggle-terminal', 'retry-ssh', 'upload-success', 'log', 'run-uploaded-yolo', 'camera-yolo-started', 'camera-yolo-stopped', 'delete-task'],
   data() {
     return {
       expandedTaskId: null,
@@ -203,6 +203,12 @@ export default {
       }
       if (this.zoomedImageUrl) {
         this.isZoomed = true;
+      }
+    },
+    confirmDelete(task) {
+      const name = task.image_id || task.id || '';
+      if (confirm('确定删除任务「' + name + '」？')) {
+        this.$emit('delete-task', task.id);
       }
     },
     // Live preview — SSE-based real-time frame push (zero polling delay)
@@ -445,6 +451,10 @@ export default {
                   <span class="status-chip" :class="task.status === 'completed' ? 'completed' : 'received'">
                     {{ task.status === 'completed' ? '已分析' : '已接收' }}
                   </span>
+                  <button type="button" class="task-delete-btn" title="删除此任务"
+                    @click.stop="confirmDelete(task)">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
                   <span class="arrow-icon">
                     <svg v-if="expandedTaskId === task.id" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
                     <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
