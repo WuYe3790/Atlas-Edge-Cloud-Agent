@@ -64,6 +64,10 @@ export default {
     initCardsAndMaps() {
       if (window.initDraggableMaps) window.initDraggableMaps(this.$el);
       if (window.initLiveMaps) window.initLiveMaps(this.$el);
+      // Ensure POI card data-map-label values match AMap marker labels
+      this.$el.querySelectorAll("[data-poi-category]").forEach(function(cat) {
+        if (window.applyPoiControls) window.applyPoiControls(cat);
+      });
       if (window.loadHotelImagesBatched) window.loadHotelImagesBatched(this.$el);
       
       // Bind event listeners for dynamically rendered maps (retry/reset buttons)

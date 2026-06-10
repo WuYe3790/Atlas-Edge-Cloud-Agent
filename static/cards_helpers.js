@@ -41,14 +41,14 @@ window.initTravelHelpers = function() {
         return;
       }
     }
-  
+
     const resetMapButton = event.target.closest(".poi-map-reset");
     if (resetMapButton) {
       const viewport = resetMapButton.closest("[data-draggable-map]");
       if (viewport) resetDraggableMap(viewport);
       return;
     }
-  
+
     const retryMapButton = event.target.closest(".poi-map-retry");
     if (retryMapButton) {
       const viewport = retryMapButton.closest("[data-draggable-map]");
@@ -66,7 +66,37 @@ window.initTravelHelpers = function() {
         const cleanSrc = image.src.split("&_retry=")[0];
         image.src = `${cleanSrc}&_retry=${Date.now()}`;
       }
+      return;
     }
+
+    // Filter chip toggle
+    const filterButton = event.target.closest(".poi-filter-chip");
+    if (filterButton) {
+      filterButton.classList.toggle("active");
+      const category = filterButton.closest("[data-poi-category]");
+      if (category) applyPoiControls(category);
+      return;
+    }
+
+    // Filter reset button
+    const filterReset = event.target.closest(".poi-filter-reset");
+    if (filterReset) {
+      const category = filterReset.closest("[data-poi-category]");
+      if (!category) return;
+      category.querySelectorAll(".poi-filter-chip.active").forEach(function(btn) { btn.classList.remove("active"); });
+      var sort = category.querySelector(".poi-sort");
+      var type = category.querySelector(".poi-type-filter");
+      if (sort) sort.value = "default";
+      if (type) type.value = "all";
+      applyPoiControls(category);
+    }
+  });
+
+  // Sort / type dropdown changes
+  messagesEl.addEventListener("change", function(event) {
+    if (!event.target.matches(".poi-sort, .poi-type-filter")) return;
+    var category = event.target.closest("[data-poi-category]");
+    if (category) applyPoiControls(category);
   });
 };
 
